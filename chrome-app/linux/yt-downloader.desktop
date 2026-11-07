@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=YT Downloader
+GenericName=YouTube downloader setup
+Comment=Set up the YT Downloader helper for Chrome: downloads yt-dlp, FFmpeg and Deno
+Exec=/opt/yt-downloader/yt-downloader
+Icon=yt-downloader
+Terminal=false
+Categories=AudioVideo;Network;
+Keywords=youtube;download;yt-dlp;mp3;mp4;

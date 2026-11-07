@@ -1,0 +1,114 @@
+:root {
+  --bg: #f7f8f6;
+  --card: #ffffff;
+  --text: #1c2420;
+  --muted: #66716b;
+  --line: #dfe5e1;
+  --accent: #1f7a5c;
+  --accent-hover: #186349;
+  --accent-soft: #e3f1eb;
+  --danger: #b4372f;
+  --bar: #e6ebe8;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #171b19;
+    --card: #202623;
+    --text: #e8eeea;
+    --muted: #96a29b;
+    --line: #313a35;
+    --accent: #3fb68b;
+    --accent-hover: #55c99d;
+    --accent-soft: #1d3a2f;
+    --danger: #f07c72;
+    --bar: #2d3531;
+  }
+}
+
+* { box-sizing: border-box; }
+body {
+  width: 380px;
+  margin: 0;
+  padding: 12px 14px 10px;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Hiragino Sans", sans-serif;
+}
+header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+h1 { font-size: 15px; margin: 0; flex: 1; font-weight: 650; }
+h2 { font-size: 12px; margin: 0; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 600; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); }
+.dot.ok { background: var(--accent); }
+.dot.busy { background: #d6a72c; }
+.dot.bad { background: var(--danger); }
+
+.card, .banner {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+.banner { border-color: var(--accent); background: var(--accent-soft); }
+.banner.bad { border-color: var(--danger); }
+.banner h3 { margin: 0 0 4px; font-size: 13px; }
+.banner p, .banner ol { margin: 4px 0; }
+.banner ol { padding-left: 18px; }
+.banner .buttons { margin-top: 8px; }
+
+.tab-title { margin: 0 0 6px; font-weight: 600; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+input[type=url] {
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--bg);
+  color: var(--text);
+  font: 12px ui-monospace, "SF Mono", Menlo, monospace;
+}
+input[type=url]:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.buttons { display: flex; gap: 8px; margin-top: 8px; }
+button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--text);
+  padding: 6px 10px;
+}
+.buttons button { flex: 1; font-weight: 600; padding: 8px 10px; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover:not(:disabled) { background: var(--accent-hover); }
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: default; }
+button.link { border: 0; background: none; padding: 0 2px; color: var(--accent); font-weight: 500; }
+button.link:hover { text-decoration: underline; }
+.hint { margin: 6px 0 0; color: var(--muted); font-size: 12px; }
+
+.section-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+ul { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; }
+.job { background: var(--card); border: 1px solid var(--line); border-radius: 9px; padding: 8px 9px; margin-bottom: 6px; }
+.job-top { display: flex; align-items: flex-start; gap: 6px; }
+.badge { font: 600 10px/1 ui-monospace, Menlo, monospace; padding: 3px 5px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); margin-top: 1px; }
+.job-title { flex: 1; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; }
+.icon-btn { border: 0; background: none; color: var(--muted); padding: 0 2px; font-size: 13px; line-height: 1; }
+.icon-btn:hover { color: var(--danger); }
+.bar { height: 5px; border-radius: 3px; background: var(--bar); margin: 7px 0 4px; overflow: hidden; }
+.bar div { height: 100%; background: var(--accent); width: 0; transition: width .25s; }
+.bar.indeterminate div { width: 35%; animation: slide 1.1s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+.job-meta { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.job-meta .grow { flex: 1; min-width: 0; }
+.job.error .job-meta .grow { color: var(--danger); }
+.empty { color: var(--muted); margin: 4px 0 12px; font-size: 12px; }
+
+footer { border-top: 1px solid var(--line); padding-top: 8px; margin-top: 4px; }
+.row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.label { color: var(--muted); white-space: nowrap; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 11.5px; }
+.ellipsis { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.muted { color: var(--muted); }
+.small { font-size: 11.5px; margin: 2px 0 0; }
+[hidden] { display: none !important; }

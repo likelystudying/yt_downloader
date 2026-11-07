@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>YT Downloader</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <img src="icons/icon32.png" width="20" height="20" alt="">
+    <h1>YT Downloader</h1>
+    <span id="status-dot" class="dot" title=""></span>
+  </header>
+
+  <section id="banner" class="banner" hidden></section>
+
+  <section class="card" id="new">
+    <p id="tab-title" class="tab-title" hidden></p>
+    <input id="url" type="url" placeholder="Paste a YouTube link" spellcheck="false" autocomplete="off">
+    <div class="buttons">
+      <button id="btn-video" class="primary">Video (MP4)</button>
+      <button id="btn-audio">Audio (MP3)</button>
+    </div>
+    <p id="url-hint" class="hint" hidden></p>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Downloads</h2>
+      <button id="clear" class="link" hidden>Clear finished</button>
+    </div>
+    <ul id="jobs"></ul>
+    <p id="empty" class="empty">Nothing yet. Open a YouTube video and click Video or Audio, or right-click a video link.</p>
+  </section>
+
+  <footer>
+    <div class="row">
+      <span class="label">Saving to</span>
+      <span id="folder" class="mono ellipsis"></span>
+      <button id="open-folder" class="link">Open</button>
+      <button id="change-folder" class="link">Change</button>
+    </div>
+    <div class="row">
+      <span id="versions" class="muted mono ellipsis"></span>
+      <button id="update" class="link">Update yt-dlp</button>
+    </div>
+    <p id="update-result" class="muted small" hidden></p>
+  </footer>
+
+  <script src="common.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
