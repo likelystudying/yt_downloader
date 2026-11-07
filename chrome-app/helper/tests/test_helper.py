@@ -66,9 +66,9 @@ def test_invalid_urls(url, monkeypatch):
 
 def test_command_keeps_downloads_out_of_playlists_and_uses_presets(tmp_path, monkeypatch):
     monkeypatch.setattr(h, "BIN_DIR", tmp_path)
-    (tmp_path / "yt-dlp").mkdir()
-    for path in ("yt-dlp/yt-dlp_macos", "ffmpeg", "deno"):
-        (tmp_path / path).touch()
+    for name in ("yt-dlp", "ffmpeg", "deno"):
+        (tmp_path / h.tool_layout()[name]).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / h.tool_layout()[name]).touch()
     video = h.build_command("https://youtu.be/dQw4w9WgXcQ", "video", tmp_path / "w")
     audio = h.build_command("https://youtu.be/dQw4w9WgXcQ", "audio", tmp_path / "w")
     assert "--no-playlist" in video and "--ignore-config" in video
@@ -175,8 +175,8 @@ class Chrome:
         self.downloads = tmp_path / "Downloads"
         bin_dir = self.home / "bin"
         bin_dir.mkdir(parents=True)
-        (bin_dir / "yt-dlp").mkdir()
-        ytdlp = bin_dir / "yt-dlp" / "yt-dlp_macos"
+        ytdlp = bin_dir / h.tool_layout()["yt-dlp"]
+        ytdlp.parent.mkdir(parents=True)
         ytdlp.write_text(f'#!/bin/sh\nexec "{sys.executable}" -m yt_dlp "$@"\n')
         (bin_dir / "deno").write_text('#!/bin/sh\necho "deno 2.5.6 (stable, release, aarch64-apple-darwin)"\n')
         for path in (ytdlp, bin_dir / "deno"):
@@ -331,7 +331,7 @@ def test_chrome_closing_stops_helper_and_download(chrome, media_server):
 def _fake_ytdlp_zip(path: Path, version: str) -> Path:
     import zipfile
     with zipfile.ZipFile(path, "w") as zf:
-        info = zipfile.ZipInfo("yt-dlp_macos")
+        info = zipfile.ZipInfo(Path(h.tool_layout()["yt-dlp"]).name)
         info.external_attr = (0o100755 << 16)
         zf.writestr(info, f"#!/bin/sh\necho {version}\n")
         zf.writestr("_internal/base_library.zip", b"stub")
@@ -371,7 +371,7 @@ def test_install_ytdlp_folder_replaces_single_file_build(isolated, tool_server, 
     assert not (h.BIN_DIR / "yt-dlp").exists()
     h.install_tool("yt-dlp")
     exe = h.tool_path("yt-dlp")
-    assert exe == h.BIN_DIR / "yt-dlp" / "yt-dlp_macos"
+    assert exe == h.BIN_DIR / h.tool_layout()["yt-dlp"]
     assert os.access(exe, os.X_OK) and os.access(h.BIN_DIR / "yt-dlp" / "_internal" / "Python", os.X_OK)
     assert h.read_tool_version("yt-dlp") == "2026.11.01"
     assert not list(h.BIN_DIR.glob(".yt-dlp*"))   # no staging leftovers

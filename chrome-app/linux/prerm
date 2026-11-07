@@ -1,0 +1,15 @@
+#!/bin/sh
+# Remove the system-wide registration when the package is removed (not on upgrade).
+set -e
+NAME=com.likelystudying.ytdownloader.json
+case "$1" in
+  remove|deconfigure)
+    for dir in /etc/opt/chrome/native-messaging-hosts \
+               /etc/chromium/native-messaging-hosts \
+               /etc/opt/edge/native-messaging-hosts; do
+      rm -f "$dir/$NAME"
+      rmdir "$dir" 2>/dev/null || true
+    done
+    ;;
+esac
+exit 0

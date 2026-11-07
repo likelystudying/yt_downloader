@@ -1,0 +1,14 @@
+Package: yt-downloader
+Version: @VERSION@
+Section: video
+Priority: optional
+Architecture: @ARCH@
+Maintainer: likelystudying <likelystudying@users.noreply.github.com>
+Installed-Size: @SIZE@
+Recommends: zenity, xdg-utils
+Homepage: https://github.com/likelystudying/yt_downloader
+Description: helper app for the YT Downloader browser extension
+ Lets the YT Downloader extension download YouTube videos (MP4) and audio
+ (MP3) from Google Chrome, Microsoft Edge or Brave. It runs yt-dlp, FFmpeg
+ and Deno, which it downloads to ~/.local/share/YT Downloader on first use.
+ Browsers installed as Snap or Flatpak packages can't run helper apps.

@@ -42,6 +42,7 @@ def main() -> None:
     big = draw()
     (ROOT / "assets").mkdir(exist_ok=True)
     big.save(ROOT / "assets" / "icon-1024.png")
+    big.resize((256, 256), Image.LANCZOS).save(ROOT / "assets" / "icon-256.png")  # Linux app menu
     # Windows .exe and installer icon.
     big.save(ROOT / "assets" / "icon.ico", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
     icons = ROOT / "chrome-extension" / "icons"

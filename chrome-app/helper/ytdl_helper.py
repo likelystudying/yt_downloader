@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-YT Downloader helper for macOS and Windows.
+YT Downloader helper for macOS, Windows and Linux (Ubuntu).
 
 One program with several jobs:
 
@@ -10,15 +10,15 @@ One program with several jobs:
                            extension, download yt-dlp, FFmpeg and Deno.
   --register               Register with Chrome and copy the extension (no dialogs).
   --install-tools          Download yt-dlp, FFmpeg, FFprobe and Deno.
-  --show-next-steps        Explain how to add the extension (Windows installer).
+  --show-next-steps        Explain how to add the extension.
   --selftest               Check that the tools run (used by the build workflows).
   --paths                  Print where things live.
   --uninstall              Remove the Chrome registration and the support folder.
   --version                Print the helper version.
 
-Its files live in ~/Library/Application Support/YT Downloader (macOS) or
-%LOCALAPPDATA%\\YT Downloader (Windows). Downloads go to Downloads/YT Downloader
-unless you choose another folder.
+Its files live in ~/Library/Application Support/YT Downloader (macOS),
+%LOCALAPPDATA%\\YT Downloader (Windows) or ~/.local/share/YT Downloader (Linux).
+Downloads go to Downloads/YT Downloader unless you choose another folder.
 """
 from __future__ import annotations
 
@@ -43,7 +43,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 APP_NAME = "YT Downloader"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 HOST_NAME = "com.likelystudying.ytdownloader"
 EXTENSION_ID = "dchdeelhpdnkdichogpodkgkhojfehph"
 EXTENSION_ORIGIN = f"chrome-extension://{EXTENSION_ID}/"
@@ -51,6 +51,7 @@ RELEASES_URL = "https://github.com/likelystudying/yt_downloader/releases"
 
 IS_MAC = sys.platform == "darwin"
 IS_WIN = sys.platform == "win32"
+IS_LINUX = sys.platform.startswith("linux")
 FROZEN = getattr(sys, "frozen", False)
 HOME = Path.home()
 # Child processes on Windows: no console windows popping up.
@@ -65,6 +66,8 @@ def _env_path(name: str, default: Path) -> Path:
 def _default_support_dir() -> Path:
     if IS_WIN:
         return Path(os.environ.get("LOCALAPPDATA") or HOME / "AppData" / "Local") / APP_NAME
+    if IS_LINUX:
+        return Path(os.environ.get("XDG_DATA_HOME") or HOME / ".local" / "share") / APP_NAME
     return HOME / "Library" / "Application Support" / APP_NAME
 
 
@@ -90,13 +93,25 @@ def _downloads_folder() -> Path:
                     return Path(folder)
         except Exception:
             pass
+    if IS_LINUX and shutil.which("xdg-user-dir"):
+        try:
+            folder = subprocess.run(["xdg-user-dir", "DOWNLOAD"], capture_output=True, text=True,
+                                    timeout=5, stdin=subprocess.DEVNULL).stdout.strip()
+            if folder and Path(folder) != HOME:  # it answers $HOME when unset
+                return Path(folder)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
     return HOME / "Downloads"
 
 
 SUPPORT_DIR = _env_path("YTDL_HOME", _default_support_dir())
 BIN_DIR = SUPPORT_DIR / "bin"
 WORK_DIR = SUPPORT_DIR / "work"  # per-job scratch folders; partial files never reach Downloads
-EXTENSION_DIR = SUPPORT_DIR / "Chrome Extension"
+# Linux .deb: the extension ships next to the program (/opt/yt-downloader/chrome-extension);
+# elsewhere the helper copies it into the support folder.
+_PACKAGED_EXTENSION = Path(sys.executable).resolve().parent / "chrome-extension" if FROZEN else None
+EXTENSION_PACKAGED = bool(IS_LINUX and _PACKAGED_EXTENSION and (_PACKAGED_EXTENSION / "manifest.json").exists())
+EXTENSION_DIR = _PACKAGED_EXTENSION if EXTENSION_PACKAGED else SUPPORT_DIR / "Chrome Extension"
 CONFIG_FILE = SUPPORT_DIR / "config.json"
 LOG_FILE = SUPPORT_DIR / "helper.log"
 DEFAULT_DOWNLOAD_DIR = _env_path("YTDL_DOWNLOADS", _downloads_folder() / APP_NAME)
@@ -129,6 +144,13 @@ WIN_BROWSER_KEYS = {
     "Chromium": r"Software\Chromium",
 }
 WIN_ALWAYS = {"Chrome", "Edge"}
+
+# Linux: per-user folders (under ~/.config) for Chromium browsers. Google Chrome
+# always; the others if that browser has been used. The .deb also registers
+# system-wide for Chrome, Chromium and Edge.
+LINUX_CHROME_DIR = "google-chrome"
+LINUX_OTHER_DIRS = ["google-chrome-beta", "google-chrome-unstable", "chromium", "microsoft-edge",
+                    "microsoft-edge-beta", "BraveSoftware/Brave-Browser"]
 
 TOOL_ORDER = ["yt-dlp", "ffmpeg", "ffprobe", "deno"]
 REQUIRED_TOOLS = {"yt-dlp", "ffmpeg", "ffprobe"}  # Deno is strongly recommended, not fatal
@@ -199,6 +221,8 @@ def tool_layout() -> dict:
         # yt-dlp and FFmpeg are folders (an .exe plus the files it loads).
         return {"yt-dlp": "yt-dlp/yt-dlp.exe", "ffmpeg": "ffmpeg/ffmpeg.exe",
                 "ffprobe": "ffmpeg/ffprobe.exe", "deno": "deno.exe"}
+    if IS_LINUX:
+        return {"yt-dlp": "yt-dlp/yt-dlp_linux", "ffmpeg": "ffmpeg", "ffprobe": "ffprobe", "deno": "deno"}
     return {"yt-dlp": "yt-dlp/yt-dlp_macos", "ffmpeg": "ffmpeg", "ffprobe": "ffprobe", "deno": "deno"}
 
 
@@ -237,6 +261,15 @@ def open_in_finder(path: Path, reveal: bool = False) -> None:
         else:
             os.startfile(str(path))  # noqa: S606 - opens the folder in File Explorer
     else:
+        if reveal and shutil.which("gdbus"):
+            # Ask the file manager (Files/Nautilus and others) to select the file.
+            shown = subprocess.run(
+                ["gdbus", "call", "--session", "--dest", "org.freedesktop.FileManager1",
+                 "--object-path", "/org/freedesktop/FileManager1",
+                 "--method", "org.freedesktop.FileManager1.ShowItems", f"['{path.as_uri()}']", ""],
+                stdin=subprocess.DEVNULL, capture_output=True)
+            if shown.returncode == 0:
+                return
         subprocess.run(["xdg-open", str(path.parent if reveal else path)],
                        stdin=subprocess.DEVNULL, capture_output=True)
 
@@ -248,8 +281,22 @@ def osascript(lines: list[str], args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd + args, stdin=subprocess.DEVNULL, capture_output=True, text=True)
 
 
+def zenity(*args: str) -> subprocess.CompletedProcess | None:
+    """Linux dialogs (zenity comes with Ubuntu's desktop)."""
+    if not shutil.which("zenity"):
+        return None
+    return subprocess.run(["zenity", f"--title={APP_NAME}", *args], stdin=subprocess.DEVNULL,
+                          capture_output=True, text=True)
+
+
 def message_box(text: str) -> None:
-    """Windows: a plain OK message box, kept on top so it isn't lost behind Chrome."""
+    """A plain OK message: kept on top on Windows so it isn't lost behind Chrome."""
+    if IS_LINUX:
+        if zenity("--info", "--no-markup", "--width=560", f"--text={text}") is None:
+            if shutil.which("notify-send"):
+                subprocess.run(["notify-send", APP_NAME, text[:300]], capture_output=True)
+            print(text)
+        return
     if IS_WIN:
         import ctypes
         MB_ICONINFORMATION, MB_SETFOREGROUND, MB_TOPMOST = 0x40, 0x10000, 0x40000
@@ -266,6 +313,14 @@ def copy_to_clipboard(text: str) -> None:
         subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
                         "Set-Clipboard -Value $env:YTDL_CLIP"],
                        env=env, stdin=subprocess.DEVNULL, capture_output=True, **NO_WINDOW)
+    elif IS_LINUX:
+        for tool in (["wl-copy"], ["xclip", "-selection", "clipboard"], ["xsel", "--clipboard", "--input"]):
+            if shutil.which(tool[0]):
+                try:
+                    subprocess.run(tool, input=text, text=True, capture_output=True, timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass  # some clipboard tools stay running to serve the text
+                return
 
 
 def dialog(text: str, buttons: tuple[str, ...] = ("OK",), default: str | None = None) -> str:
@@ -340,6 +395,18 @@ def tool_specs() -> dict:
             "ffprobe": {"provided_by": "ffmpeg"},
             "deno": {"url": "https://github.com/denoland/deno/releases/latest/download/"
                             "deno-x86_64-pc-windows-msvc.zip", "member": "deno.exe"},
+        }
+    if IS_LINUX:
+        arm = arch() == "arm64"
+        ff_base = f"https://ffmpeg.martin-riedl.de/redirect/latest/linux/{'arm64' if arm else 'amd64'}/release"
+        return {
+            "yt-dlp": {"url": "https://github.com/yt-dlp/yt-dlp/releases/latest/download/"
+                              + ("yt-dlp_linux_aarch64.zip" if arm else "yt-dlp_linux.zip"), "folder": "yt-dlp"},
+            # Static builds from the same provider as on the Mac.
+            "ffmpeg": {"url": f"{ff_base}/ffmpeg.zip", "member": "ffmpeg"},
+            "ffprobe": {"url": f"{ff_base}/ffprobe.zip", "member": "ffprobe"},
+            "deno": {"url": "https://github.com/denoland/deno/releases/latest/download/"
+                            f"deno-{'aarch64' if arm else 'x86_64'}-unknown-linux-gnu.zip", "member": "deno"},
         }
     arm = arch() == "arm64"
     deno_arch = "aarch64" if arm else "x86_64"
@@ -1042,6 +1109,15 @@ class Host:
                 update_config(download_dir=chosen)
             self.send(self.status_message("config"))
             return
+        if IS_LINUX:
+            picked = zenity("--file-selection", "--directory", f"--filename={current}/")
+            if picked is None:
+                self.send({"type": "error", "message": "Install zenity to choose a folder."})
+                return
+            if picked.returncode == 0 and picked.stdout.strip():
+                update_config(download_dir=picked.stdout.strip())
+            self.send(self.status_message("config"))
+            return
         if not IS_MAC:
             self.send({"type": "error", "message": "Choosing a folder isn't available here."})
             return
@@ -1122,13 +1198,31 @@ def manifest_dirs() -> list[Path]:
     override = os.environ.get("YTDL_NM_DIRS")
     if override:
         return [Path(p) for p in override.split(os.pathsep) if p]
+    if IS_LINUX:
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config")
+        dirs = [base / LINUX_CHROME_DIR / "NativeMessagingHosts"]
+        dirs += [base / d / "NativeMessagingHosts" for d in LINUX_OTHER_DIRS if (base / d).is_dir()]
+        return dirs
     base = HOME / "Library" / "Application Support"
     dirs = [base / CHROME_DIR / "NativeMessagingHosts"]
     dirs += [base / d / "NativeMessagingHosts" for d in OTHER_BROWSER_DIRS if (base / d).is_dir()]
     return dirs
 
 
+def all_manifest_dirs() -> set[Path]:
+    """Every per-user folder we might have written to (for uninstall)."""
+    if IS_LINUX:
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config")
+        names = [LINUX_CHROME_DIR, *LINUX_OTHER_DIRS]
+    else:
+        base = HOME / "Library" / "Application Support"
+        names = [CHROME_DIR, *OTHER_BROWSER_DIRS]
+    return set(manifest_dirs()) | {base / n / "NativeMessagingHosts" for n in names}
+
+
 def copy_extension() -> Path:
+    if EXTENSION_PACKAGED:  # Linux .deb: already in place, read-only
+        return EXTENSION_DIR
     source = bundled_extension_dir()
     if not (source / "manifest.json").exists():
         raise RuntimeError(f"Extension files not found at {source}")
@@ -1215,9 +1309,7 @@ def uninstall() -> None:
                 pass
         shutil.rmtree(SUPPORT_DIR, ignore_errors=True)
         return
-    base = HOME / "Library" / "Application Support"
-    folders = set(manifest_dirs()) | {base / d / "NativeMessagingHosts" for d in [CHROME_DIR, *OTHER_BROWSER_DIRS]}
-    for folder in folders:
+    for folder in all_manifest_dirs():
         (folder / f"{HOST_NAME}.json").unlink(missing_ok=True)
     shutil.rmtree(SUPPORT_DIR, ignore_errors=True)
 
@@ -1310,8 +1402,21 @@ WINDOWS_NEXT_STEPS = (
 )
 
 
+LINUX_NEXT_STEPS = (
+    "YT Downloader is installed.{note}\n\n"
+    "Last step (one time): add the extension to Chrome.\n"
+    "1. In Chrome, go to chrome://extensions\n"
+    "2. Turn on “Developer mode” (top right).\n"
+    "3. Click “Load unpacked”, press Ctrl+L, type or paste this folder, press Enter, "
+    "then click Select:\n\n"
+    "        {folder}\n\n"
+    "Works with Google Chrome, Microsoft Edge and Brave installed from their own .deb packages. "
+    "The Snap version of Chromium can't run helper apps."
+)
+
+
 def show_next_steps(failures: dict | None = None) -> None:
-    """Windows: how to add the extension (the installer runs this at the end)."""
+    """How to add the extension (Windows installer and Linux setup run this at the end)."""
     copy_extension()
     copy_to_clipboard(str(EXTENSION_DIR))
     note = ""
@@ -1319,8 +1424,29 @@ def show_next_steps(failures: dict | None = None) -> None:
     if missing:
         note = ("\n\nSome parts didn't download (" + ", ".join(missing) +
                 "). They'll be retried automatically on your first download.")
+    if IS_LINUX:
+        message_box(LINUX_NEXT_STEPS.format(note=note, folder=EXTENSION_DIR))
+        return
     message_box(WINDOWS_NEXT_STEPS.format(note=note))
     open_in_finder(EXTENSION_DIR, reveal=True)
+
+
+def linux_setup() -> None:
+    """Linux: what the "YT Downloader" app-menu entry runs."""
+    print(f"{APP_NAME} {VERSION}: setting up…", flush=True)
+    register()
+    waiting = None
+    if missing_tools() and shutil.which("zenity"):
+        waiting = subprocess.Popen(
+            ["zenity", "--progress", "--pulsate", "--no-cancel", f"--title={APP_NAME}",
+             "--text=Downloading yt-dlp, FFmpeg and Deno… This usually takes about a minute."],
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        failures = install_tools_cli(verbose=True)
+    finally:
+        if waiting and waiting.poll() is None:
+            waiting.terminate()
+    show_next_steps(failures)
 
 
 def windows_setup() -> None:
@@ -1363,7 +1489,7 @@ def main(argv: list[str]) -> int:
     if "--register" in args:
         for folder in register():
             print(f"registered in {folder}")
-        print(f"extension copied to {EXTENSION_DIR}")
+        print(f"extension folder: {EXTENSION_DIR}")
         return 0
     if "--install-tools" in args:
         failures = install_tools_cli()
@@ -1386,6 +1512,9 @@ def main(argv: list[str]) -> int:
             return 0
         if IS_WIN:
             windows_setup()
+            return 0
+        if IS_LINUX:
+            linux_setup()
             return 0
     print(__doc__)
     return 0 if not args else 2

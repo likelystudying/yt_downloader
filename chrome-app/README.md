@@ -1,4 +1,4 @@
-# YT Downloader for Chrome (Mac and Windows)
+# YT Downloader for Chrome (Mac, Windows and Ubuntu)
 
 Download a YouTube video as **MP4** or its audio as **MP3** from Chrome, straight into
 `Downloads/YT Downloader`. No Terminal or command prompt needed.
@@ -16,7 +16,8 @@ Chrome extension ──native messaging──▶ YT Downloader app ──▶ yt-
 ```
 
 Downloads are on the [Releases page](https://github.com/likelystudying/yt_downloader/releases):
-`YT-Downloader-mac.zip` (Apple Silicon Macs, macOS 12+) and `YT-Downloader-Setup.exe` (Windows 10/11, 64-bit).
+`YT-Downloader-mac.zip` (Apple Silicon Macs, macOS 12+), `YT-Downloader-Setup.exe` (Windows 10/11,
+64-bit) and `yt-downloader_<version>_amd64.deb` (Ubuntu 22.04 or newer, 64-bit Intel/AMD).
 
 ## Install on Windows (one time, about 3 minutes)
 
@@ -35,6 +36,26 @@ Downloads are on the [Releases page](https://github.com/likelystudying/yt_downlo
    4. Optional: click the puzzle-piece icon in Chrome's toolbar and pin **YT Downloader**.
 
    In Edge it's the same at `edge://extensions` (**Developer mode** is on the left).
+
+## Install on Ubuntu (one time, about 3 minutes)
+
+Works with **Google Chrome**, **Microsoft Edge** or **Brave** installed from their own `.deb` packages.
+The Snap version of Chromium (Ubuntu's default "Chromium") and Flatpak browsers can't run helper apps.
+
+1. **Download** `yt-downloader_<version>_amd64.deb` and double-click it. **App Center** opens; click
+   **Install** and enter your password. (Ubuntu 24.04 needs an up-to-date App Center for this; on
+   22.04, right-click the file → **Open With → Software Install**.)
+2. Open **YT Downloader** from your apps (press the Super key and type “YT”). It downloads yt-dlp,
+   FFmpeg and Deno (over 100 MB, usually a minute), then shows the last step.
+3. **Add the extension to Chrome:**
+   1. In Chrome, go to `chrome://extensions`.
+   2. Turn on **Developer mode** (top right).
+   3. Click **Load unpacked**, press **Ctrl+L**, type `/opt/yt-downloader/chrome-extension`, press
+      **Enter**, then click **Select**.
+   4. Optional: click the puzzle-piece icon in Chrome's toolbar and pin **YT Downloader**.
+
+Step 2 is optional: if you skip it, the first download installs the tools itself (the popup shows
+“Installing components…”).
 
 ## Install on Mac (one time, about 3 minutes)
 
@@ -63,7 +84,7 @@ it's loaded this way instead. Chrome may show a notice about developer-mode exte
 - On a YouTube video page, click the **YT Downloader** toolbar button, then **Video (MP4)** or **Audio (MP3)**.
 - Or **right-click** the video page, or any YouTube video link on any site, and choose a download.
 - Progress shows in the popup and on the toolbar button. You get a notification when a file is ready;
-  click it to show the file in Finder or File Explorer.
+  click it to show the file in Finder, File Explorer or Files.
 - Downloads run one at a time. You can queue several and cancel any of them.
 - To save somewhere else, click **Change** at the bottom of the popup.
 
@@ -79,6 +100,7 @@ To install a newer version of the helper:
 
 - **Windows:** run the new `YT-Downloader-Setup.exe`; it upgrades in place.
 - **Mac:** download the new zip, replace the app in Applications, and open it once.
+- **Ubuntu:** open the new `.deb`; it upgrades in place.
 
 Then click the reload arrow on YT Downloader in `chrome://extensions`.
 
@@ -93,12 +115,18 @@ Then click the reload arrow on YT Downloader in `chrome://extensions`.
 | Mac: “Python.framework is damaged and can't be opened” when you download | Fixed in 1.0.1. Install the current version, open it once, then click **Update yt-dlp**. |
 | Mac: asked whether Chrome or YT Downloader may access your Downloads folder | Click **Allow**. |
 | Windows: antivirus warns about YT Downloader or yt-dlp | Some antivirus tools flag unsigned Python-based programs. The files are built from this repository by GitHub Actions. |
-| Anything else | Send the log: **Mac** `~/Library/Application Support/YT Downloader/helper.log` (Finder → Go → Go to Folder…), **Windows** `%LOCALAPPDATA%\YT Downloader\helper.log` (paste into File Explorer's address bar). |
+| Ubuntu: popup says “Install the helper app” although you did | Check you're using Chrome, Edge or Brave from a `.deb`, not the Snap Chromium. Then open YT Downloader from your apps once. |
+| Anything else | Send the log: **Mac** `~/Library/Application Support/YT Downloader/helper.log` (Finder → Go → Go to Folder…), **Windows** `%LOCALAPPDATA%\YT Downloader\helper.log` (paste into File Explorer's address bar), **Ubuntu** `~/.local/share/YT Downloader/helper.log`. |
 
 ## Uninstall
 
 **Windows:** Settings → Apps → Installed apps → **YT Downloader** → Uninstall. This removes the app, its
 tools and the Chrome/Edge registration. Then click **Remove** on YT Downloader in `chrome://extensions`.
+
+**Ubuntu:** in App Center → Manage, remove **yt-downloader** (or `sudo apt remove yt-downloader`). This
+removes the app and the browser registration. To also remove the downloaded tools, delete
+`~/.local/share/YT Downloader` (in Files, press Ctrl+H to show hidden folders). Then click **Remove** on
+YT Downloader in `chrome://extensions`.
 
 **Mac:**
 1. In `chrome://extensions`, click **Remove** on YT Downloader.
@@ -111,16 +139,16 @@ Your downloaded files are never touched.
 
 ## Where things live
 
-| What | Mac | Windows |
-|---|---|---|
-| The app | `/Applications/YT Downloader.app` | `%LOCALAPPDATA%\Programs\YT Downloader` |
-| yt-dlp, FFmpeg, FFprobe, Deno | `~/Library/Application Support/YT Downloader/bin` | `%LOCALAPPDATA%\YT Downloader\bin` |
-| Extension files (loaded unpacked) | `~/Library/Application Support/YT Downloader/Chrome Extension` | `%LOCALAPPDATA%\YT Downloader\Chrome Extension` |
-| Settings and log | same folder: `config.json`, `helper.log` | same folder: `config.json`, `helper.log` |
-| Browser registration | `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/…json` | registry `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.likelystudying.ytdownloader` (also Edge) |
-| Downloads | `~/Downloads/YT Downloader` (changeable) | `Downloads\YT Downloader` (changeable) |
+| What | Mac | Windows | Ubuntu |
+|---|---|---|---|
+| The app | `/Applications/YT Downloader.app` | `%LOCALAPPDATA%\Programs\YT Downloader` | `/opt/yt-downloader` |
+| yt-dlp, FFmpeg, FFprobe, Deno | `~/Library/Application Support/YT Downloader/bin` | `%LOCALAPPDATA%\YT Downloader\bin` | `~/.local/share/YT Downloader/bin` |
+| Extension files (loaded unpacked) | `~/Library/Application Support/YT Downloader/Chrome Extension` | `%LOCALAPPDATA%\YT Downloader\Chrome Extension` | `/opt/yt-downloader/chrome-extension` |
+| Settings and log | same folder as the tools: `config.json`, `helper.log` | same | same |
+| Browser registration | `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/…json` | registry `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.likelystudying.ytdownloader` (also Edge) | `/etc/opt/chrome/native-messaging-hosts/`, `/etc/chromium/…`, `/etc/opt/edge/…` (+ `~/.config/<browser>/NativeMessagingHosts` after first run) |
+| Downloads | `~/Downloads/YT Downloader` (changeable) | `Downloads\YT Downloader` (changeable) | `~/Downloads/YT Downloader` (changeable) |
 
-Brave, Chromium (both) and Chrome Beta/Dev/Canary (Mac) are registered too if they're installed.
+Brave, Chromium and Chrome Beta/Dev/Canary are registered too if they're installed.
 
 ## For developers
 
@@ -132,18 +160,20 @@ chrome-app/
 │   ├── YTDownloader.spec  PyInstaller spec (Mac .app / Windows .exe)
 │   └── tests/             pytest suite + e2e_chrome.py (real Chrome, extension and helper)
 ├── windows/installer.iss  Inno Setup script for YT-Downloader-Setup.exe
+├── linux/                 build_deb.sh, control.in, postinst/prerm, .desktop entry for the .deb
 ├── ci/                    protocol_check.py (talks to the built app like Chrome does),
 │                          e2e_chromium.py (real Chromium + extension + built/installed app)
-├── assets/                icon-1024.png and icon.ico (tools/make_icons.py draws them)
+├── assets/                icon-1024.png, icon-256.png, icon.ico (tools/make_icons.py draws them)
 └── README.md
 ```
 
 - The extension has a fixed ID (`dchdeelhpdnkdichogpodkgkhojfehph`, from the `key` in its manifest).
   The helper accepts only that ID.
-- `.github/workflows/chrome-app-build.yml` builds both apps. Each job downloads the real tools, runs a
+- `.github/workflows/chrome-app-build.yml` builds all three. Each job downloads the real tools, runs a
   video and an audio download through the built app the way Chrome does, and drives real Chromium with
-  the extension. The Windows job also installs and uninstalls silently and checks the registry.
-- To publish a release: **Actions → Chrome helper apps (Mac + Windows) → Run workflow → Publish a release**.
+  the extension. The Windows job also installs and uninstalls silently and checks the registry; the
+  Ubuntu job installs the `.deb`, tests the installed app, and removes it.
+- To publish a release: **Actions → Chrome helper apps → Run workflow → Publish a release**.
 - Tests: `pip install yt-dlp pytest` and FFmpeg, then `python -m pytest chrome-app/helper/tests`.
   End-to-end in Chrome for Testing: `python chrome-app/helper/tests/e2e_chrome.py`.
 

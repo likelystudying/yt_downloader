@@ -43,12 +43,17 @@ function renderHelper() {
   if (s === "missing") {
     els.banner.append(
       el("h3", {}, "Install the helper app (one time)"),
-      el("p", {}, `The extension needs its small ${IS_WINDOWS ? "Windows" : "Mac"} app to save files.`),
+      el("p", {}, `The extension needs its small ${PLATFORM_NAME} app to save files.`),
       IS_WINDOWS
         ? el("ol", {},
             el("li", {}, "Download YT-Downloader-Setup.exe and run it."),
             el("li", {}, "If Windows says it protected your PC: More info → Run anyway."),
             el("li", {}, "Come back here."))
+        : IS_LINUX
+        ? el("ol", {},
+            el("li", {}, "Download the yt-downloader .deb file and open it (App Center installs it)."),
+            el("li", {}, "Open “YT Downloader” from your apps once."),
+            el("li", {}, "Come back here. (Snap and Flatpak browsers can't run the helper.)"))
         : el("ol", {},
             el("li", {}, "Download “YT Downloader for Mac” and unzip it."),
             el("li", {}, "Drag YT Downloader into Applications and open it."),

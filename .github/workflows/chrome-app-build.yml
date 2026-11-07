@@ -1,8 +1,9 @@
-name: Chrome helper apps (Mac + Windows)
+name: Chrome helper apps
 
 # Builds the helper the YT Downloader Chrome extension talks to:
 #   macOS:   YT Downloader.app  -> YT-Downloader-mac.zip
 #   Windows: YT Downloader.exe  -> YT-Downloader-Setup.exe (Inno Setup, per-user)
+#   Ubuntu:  yt-downloader      -> yt-downloader_<version>_amd64.deb
 # Each job downloads the real tools, runs real downloads through the built
 # helper the way Chrome does, and drives real Chromium with the extension.
 #
@@ -19,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish a release with the Mac and Windows downloads
+        description: Publish a release with the Mac, Windows and Ubuntu downloads
         type: boolean
         default: false
 
@@ -229,9 +230,88 @@ jobs:
           path: ${{ runner.temp }}\shots
           if-no-files-found: ignore
 
+  linux:
+    name: Build and check the Ubuntu app
+    needs: test
+    # Built on the oldest supported Ubuntu so the binary runs on 22.04 and newer.
+    runs-on: ubuntu-22.04
+    env:
+      APP: chrome-app/helper/dist/yt-downloader/yt-downloader
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "pyinstaller>=6.13,<7" certifi playwright
+
+      - name: Build yt-downloader
+        working-directory: chrome-app/helper
+        run: pyinstaller --noconfirm --clean YTDownloader.spec
+
+      - name: Check the app on Ubuntu
+        env:
+          YTDL_HOME: ${{ runner.temp }}/ytdl-home
+        run: |
+          set -eu
+          "$APP" --version
+          "$APP" --install-tools
+          "$APP" --selftest
+          "$APP" --paths
+          YTDL_NM_DIRS="$RUNNER_TEMP/nm" "$APP" --register
+          cat "$RUNNER_TEMP/nm/com.likelystudying.ytdownloader.json"
+          test -x "$YTDL_HOME/bin/yt-dlp/yt-dlp_linux"
+          python3 chrome-app/ci/protocol_check.py "$APP"
+
+      - name: Build the .deb
+        run: |
+          set -eu
+          VERSION=$(python3 -c "import re;print(re.search(r'^VERSION = \"([^\"]+)\"', open('chrome-app/helper/ytdl_helper.py').read(), re.M).group(1))")
+          sh chrome-app/linux/build_deb.sh "$VERSION" amd64
+          dpkg-deb --contents out/*.deb | grep -E "opt/yt-downloader/(yt-downloader|chrome-extension/manifest.json|native-messaging-host.json)$|applications/|apps/yt-downloader.png"
+
+      - name: Install the .deb and drive Chromium with the installed app
+        env:
+          E2E_SHOTS: ${{ runner.temp }}/shots
+        run: |
+          set -eu
+          mkdir -p "$E2E_SHOTS"
+          sudo apt-get update -qq
+          sudo apt-get install -y ./out/yt-downloader_*_amd64.deb
+          for d in /etc/opt/chrome /etc/chromium /etc/opt/edge; do
+            python3 -c "import json,sys;m=json.load(open(sys.argv[1]));assert m['path']=='/opt/yt-downloader/yt-downloader',m;print(sys.argv[1],'ok')" \
+              "$d/native-messaging-hosts/com.likelystudying.ytdownloader.json"
+          done
+          test -f /usr/share/applications/yt-downloader.desktop
+          yt-downloader --install-tools      # the default per-user folder (~/.local/share/YT Downloader)
+          yt-downloader --selftest
+          yt-downloader --paths | grep -q "extension:       /opt/yt-downloader/chrome-extension"
+          python3 -m playwright install --with-deps chromium
+          python3 chrome-app/ci/e2e_chromium.py /opt/yt-downloader/yt-downloader
+
+      - name: Remove the .deb
+        run: |
+          set -eu
+          sudo apt-get remove -y yt-downloader
+          test ! -e /opt/yt-downloader
+          test ! -e /etc/opt/chrome/native-messaging-hosts/com.likelystudying.ytdownloader.json
+          test ! -e /etc/opt/edge/native-messaging-hosts/com.likelystudying.ytdownloader.json
+          echo "removal clean"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: YT-Downloader-Ubuntu
+          path: out/*.deb
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: screenshots-ubuntu
+          path: ${{ runner.temp }}/shots
+          if-no-files-found: ignore
+
   release:
     name: Publish release
-    needs: [mac, windows]
+    needs: [mac, windows, linux]
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish
     runs-on: ubuntu-latest
     steps:
@@ -246,10 +326,10 @@ jobs:
           set -eu
           VERSION=$(python3 -c "import re;print(re.search(r'^VERSION = \"([^\"]+)\"', open('chrome-app/helper/ytdl_helper.py').read(), re.M).group(1))")
           TAG="v$VERSION"
-          FILES="dist/YT-Downloader-mac/YT-Downloader-mac.zip dist/YT-Downloader-Windows/YT-Downloader-Setup.exe"
+          FILES="dist/YT-Downloader-mac/YT-Downloader-mac.zip dist/YT-Downloader-Windows/YT-Downloader-Setup.exe $(ls dist/YT-Downloader-Ubuntu/*.deb)"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" $FILES --clobber
           else
             gh release create "$TAG" $FILES --target "$GITHUB_SHA" \
-              --title "YT Downloader $VERSION (Mac + Windows)" --notes-file chrome-app/RELEASE_NOTES.md
+              --title "YT Downloader $VERSION (Mac, Windows, Ubuntu)" --notes-file chrome-app/RELEASE_NOTES.md
           fi

@@ -58,10 +58,15 @@ def main(helper_exe: str) -> None:
                                str(h.SUPPORT_DIR / "native-messaging-host.json"))
     else:
         dirs = [profile / "NativeMessagingHosts",
+                Path.home() / ".config" / "chromium" / "NativeMessagingHosts" if h.IS_LINUX else
                 Path.home() / "Library" / "Application Support" / "Chromium" / "NativeMessagingHosts"]
         subprocess.run([helper_exe, "--register"], check=True,
                        env={**os.environ, "YTDL_NM_DIRS": os.pathsep.join(map(str, dirs))})
-    ext_dir = h.EXTENSION_DIR
+    # Ask the helper where its extension lives (the Linux .deb keeps it in /opt).
+    paths = subprocess.run([helper_exe, "--paths"], check=True, capture_output=True, text=True).stdout
+    ext_dir = Path(next(line.split(":", 1)[1].strip() for line in paths.splitlines()
+                        if line.startswith("extension:")))
+    print("extension folder:", ext_dir)
     assert (ext_dir / "manifest.json").exists(), ext_dir
 
     env = {**os.environ, "YTDL_URL_OVERRIDE": clip_url, "YTDL_DOWNLOADS": str(downloads), "YTDL_NO_OPEN": "1"}

@@ -1,0 +1,22 @@
+#!/bin/sh
+# Register the helper system-wide so Chrome, Chromium and Edge can start it.
+set -e
+MANIFEST=/opt/yt-downloader/native-messaging-host.json
+NAME=com.likelystudying.ytdownloader.json
+case "$1" in
+  configure)
+    for dir in /etc/opt/chrome/native-messaging-hosts \
+               /etc/chromium/native-messaging-hosts \
+               /etc/opt/edge/native-messaging-hosts; do
+      mkdir -p "$dir"
+      install -m 644 "$MANIFEST" "$dir/$NAME"
+    done
+    if command -v update-desktop-database >/dev/null 2>&1; then
+      update-desktop-database -q /usr/share/applications || true
+    fi
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+      gtk-update-icon-cache -q -t /usr/share/icons/hicolor || true
+    fi
+    ;;
+esac
+exit 0
