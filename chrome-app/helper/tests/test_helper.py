@@ -364,7 +364,7 @@ def isolated(tmp_path, monkeypatch):
 def test_install_ytdlp_folder_replaces_single_file_build(isolated, tool_server, monkeypatch):
     root, base = tool_server
     _fake_ytdlp_zip(root / "yt-dlp_macos.zip", "2026.11.01")
-    monkeypatch.setattr(h, "tool_specs", lambda: {"yt-dlp": {"url": f"{base}/yt-dlp_macos.zip", "unpack": True}})
+    monkeypatch.setattr(h, "tool_specs", lambda: {"yt-dlp": {"url": f"{base}/yt-dlp_macos.zip", "folder": "yt-dlp"}})
     h.BIN_DIR.mkdir(parents=True)
     (h.BIN_DIR / "yt-dlp").write_text("old single-file build")   # what 1.0.0 installed
     h.prepare_tools()
@@ -384,7 +384,7 @@ def test_install_ytdlp_folder_replaces_single_file_build(isolated, tool_server, 
 def test_update_installs_only_when_newer(isolated, tool_server, monkeypatch):
     root, base = tool_server
     _fake_ytdlp_zip(root / "yt-dlp_macos.zip", "2026.11.01")
-    monkeypatch.setattr(h, "tool_specs", lambda: {"yt-dlp": {"url": f"{base}/yt-dlp_macos.zip", "unpack": True}})
+    monkeypatch.setattr(h, "tool_specs", lambda: {"yt-dlp": {"url": f"{base}/yt-dlp_macos.zip", "folder": "yt-dlp"}})
     h.install_tool("yt-dlp")
     sent = []
     host = h.Host.__new__(h.Host)

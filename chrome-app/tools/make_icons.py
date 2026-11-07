@@ -1,9 +1,9 @@
 """Draw the YT Downloader icon (a down arrow into a tray) at every size we need.
 
-    python3 mac/tools/make_icons.py
+    python3 chrome-app/tools/make_icons.py
 
-Writes the extension icons and mac/assets/icon-1024.png (the build workflow
-turns that into the app's .icns).
+Writes the extension icons, chrome-app/assets/icon-1024.png (the build workflow
+turns that into the Mac app's .icns) and chrome-app/assets/icon.ico (Windows).
 """
 from pathlib import Path
 
@@ -42,6 +42,8 @@ def main() -> None:
     big = draw()
     (ROOT / "assets").mkdir(exist_ok=True)
     big.save(ROOT / "assets" / "icon-1024.png")
+    # Windows .exe and installer icon.
+    big.save(ROOT / "assets" / "icon.ico", sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)])
     icons = ROOT / "chrome-extension" / "icons"
     icons.mkdir(parents=True, exist_ok=True)
     for size in (16, 32, 48, 128):

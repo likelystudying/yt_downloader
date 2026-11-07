@@ -15,8 +15,8 @@ A user-friendly graphical interface for downloading videos and audio from YouTub
 - **Three Versions Available**:
   - **PowerShell** (Windows-only): Native Windows GUI
   - **Python** (Cross-platform): Works on Windows, macOS, and Linux
-  - **Mac + Chrome extension**: download from Chrome's toolbar or right-click menu, no Terminal needed.
-    See [mac/README.md](mac/README.md).
+  - **Chrome extension + helper app (Mac and Windows)**: download from Chrome's toolbar or right-click
+    menu, no Terminal needed. See [chrome-app/README.md](chrome-app/README.md).
 
 ## 🚀 Getting Started
 

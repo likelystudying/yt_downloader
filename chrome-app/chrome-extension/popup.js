@@ -43,11 +43,16 @@ function renderHelper() {
   if (s === "missing") {
     els.banner.append(
       el("h3", {}, "Install the helper app (one time)"),
-      el("p", {}, "The extension needs its small Mac app to save files."),
-      el("ol", {},
-        el("li", {}, "Download “YT Downloader for Mac” and unzip it."),
-        el("li", {}, "Drag YT Downloader into Applications and open it."),
-        el("li", {}, "Come back here.")),
+      el("p", {}, `The extension needs its small ${IS_WINDOWS ? "Windows" : "Mac"} app to save files.`),
+      IS_WINDOWS
+        ? el("ol", {},
+            el("li", {}, "Download YT-Downloader-Setup.exe and run it."),
+            el("li", {}, "If Windows says it protected your PC: More info → Run anyway."),
+            el("li", {}, "Come back here."))
+        : el("ol", {},
+            el("li", {}, "Download “YT Downloader for Mac” and unzip it."),
+            el("li", {}, "Drag YT Downloader into Applications and open it."),
+            el("li", {}, "Come back here.")),
       el("div", { class: "buttons" },
         el("button", { class: "primary", onclick: () => chrome.tabs.create({ url: RELEASES_URL }) }, "Download the helper"),
         el("button", { onclick: () => ask("status") }, "Check again")));
@@ -79,7 +84,9 @@ function renderHelper() {
   }
   els.banner.hidden = !show;
 
-  els.folder.textContent = h.downloadDir ? h.downloadDir.replace(/^\/Users\/[^/]+/, "~") : "—";
+  els.folder.textContent = h.downloadDir
+    ? h.downloadDir.replace(/^\/Users\/[^/]+/, "~").replace(/^[A-Za-z]:\\Users\\[^\\]+/, "~")
+    : "—";
   els.folder.title = h.downloadDir || "";
   const t = h.tools || {};
   els.versions.textContent = t["yt-dlp"] ? `yt-dlp ${t["yt-dlp"]}` : (h.version ? "yt-dlp not installed" : "");
@@ -152,7 +159,7 @@ function renderJob(job) {
   }
   const meta = el("div", { class: "job-meta" }, el("span", { class: "grow", title: statusLine(job) }, statusLine(job)));
   if (job.status === "done" && job.file) {
-    meta.append(el("button", { class: "link", onclick: () => ask("reveal", { path: job.file }) }, "Show in Finder"));
+    meta.append(el("button", { class: "link", onclick: () => ask("reveal", { path: job.file }) }, SHOW_IN_FOLDER));
   }
   if (job.status === "error" || job.status === "cancelled") {
     meta.append(el("button", { class: "link", onclick: () => ask("retry", { id: job.id }) }, "Retry"));

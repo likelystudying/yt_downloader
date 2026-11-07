@@ -4,6 +4,8 @@ const HELPER_HOST = "com.likelystudying.ytdownloader";
 const RELEASES_URL = "https://github.com/likelystudying/yt_downloader/releases";
 const ACTIVE = new Set(["sending", "queued", "preparing", "running", "processing"]);
 const YT_HOSTS = new Set(["youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"]);
+const IS_WINDOWS = /Windows/i.test(navigator.userAgent);
+const SHOW_IN_FOLDER = IS_WINDOWS ? "Show in folder" : "Show in Finder";
 
 // Same rules as the helper (and the original yt-dlp-gui.py).
 function isYouTubeVideoUrl(text) {

@@ -1,21 +1,24 @@
 #!/usr/bin/env python3
 """
-YT Downloader helper for macOS.
+YT Downloader helper for macOS and Windows.
 
 One program with several jobs:
 
   chrome-extension://...   Chrome started us. Talk to the extension over
                            native messaging (stdin/stdout) and run downloads.
-  (no arguments)           Double-clicked in Finder. Register with Chrome,
-                           copy the extension, download yt-dlp, FFmpeg and Deno.
+  (no arguments)           Double-clicked. Register with Chrome, copy the
+                           extension, download yt-dlp, FFmpeg and Deno.
   --register               Register with Chrome and copy the extension (no dialogs).
   --install-tools          Download yt-dlp, FFmpeg, FFprobe and Deno.
-  --selftest               Check that the tools run (used by the build workflow).
+  --show-next-steps        Explain how to add the extension (Windows installer).
+  --selftest               Check that the tools run (used by the build workflows).
+  --paths                  Print where things live.
   --uninstall              Remove the Chrome registration and the support folder.
   --version                Print the helper version.
 
-Everything it writes lives in ~/Library/Application Support/YT Downloader,
-and downloads go to ~/Downloads/YT Downloader unless you choose another folder.
+Its files live in ~/Library/Application Support/YT Downloader (macOS) or
+%LOCALAPPDATA%\\YT Downloader (Windows). Downloads go to Downloads/YT Downloader
+unless you choose another folder.
 """
 from __future__ import annotations
 
@@ -40,15 +43,18 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 APP_NAME = "YT Downloader"
-VERSION = "1.0.1"
+VERSION = "1.1.0"
 HOST_NAME = "com.likelystudying.ytdownloader"
 EXTENSION_ID = "dchdeelhpdnkdichogpodkgkhojfehph"
 EXTENSION_ORIGIN = f"chrome-extension://{EXTENSION_ID}/"
 RELEASES_URL = "https://github.com/likelystudying/yt_downloader/releases"
 
 IS_MAC = sys.platform == "darwin"
+IS_WIN = sys.platform == "win32"
 FROZEN = getattr(sys, "frozen", False)
 HOME = Path.home()
+# Child processes on Windows: no console windows popping up.
+NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if IS_WIN else {}
 
 
 def _env_path(name: str, default: Path) -> Path:
@@ -56,19 +62,52 @@ def _env_path(name: str, default: Path) -> Path:
     return Path(value).expanduser() if value else default
 
 
-SUPPORT_DIR = _env_path("YTDL_HOME", HOME / "Library" / "Application Support" / APP_NAME)
+def _default_support_dir() -> Path:
+    if IS_WIN:
+        return Path(os.environ.get("LOCALAPPDATA") or HOME / "AppData" / "Local") / APP_NAME
+    return HOME / "Library" / "Application Support" / APP_NAME
+
+
+def _downloads_folder() -> Path:
+    """The user's Downloads folder (on Windows it can be moved, so ask the shell)."""
+    if IS_WIN:
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class GUID(ctypes.Structure):
+                _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
+                            ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+
+            known = uuid.UUID("374DE290-123F-4565-9164-39C4925E467B")  # FOLDERID_Downloads
+            guid = GUID(known.time_low, known.time_mid, known.time_hi_version,
+                        (ctypes.c_ubyte * 8).from_buffer_copy(known.bytes[8:]))
+            out = ctypes.c_wchar_p()
+            if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(guid), 0, None, ctypes.byref(out)) == 0:
+                folder = out.value
+                ctypes.windll.ole32.CoTaskMemFree(out)
+                if folder:
+                    return Path(folder)
+        except Exception:
+            pass
+    return HOME / "Downloads"
+
+
+SUPPORT_DIR = _env_path("YTDL_HOME", _default_support_dir())
 BIN_DIR = SUPPORT_DIR / "bin"
 WORK_DIR = SUPPORT_DIR / "work"  # per-job scratch folders; partial files never reach Downloads
 EXTENSION_DIR = SUPPORT_DIR / "Chrome Extension"
 CONFIG_FILE = SUPPORT_DIR / "config.json"
 LOG_FILE = SUPPORT_DIR / "helper.log"
-DEFAULT_DOWNLOAD_DIR = _env_path("YTDL_DOWNLOADS", HOME / "Downloads" / APP_NAME)
+DEFAULT_DOWNLOAD_DIR = _env_path("YTDL_DOWNLOADS", _downloads_folder() / APP_NAME)
 
 # Test switches. Chrome never sets these.
 ALLOW_ANY_URL = os.environ.get("YTDL_ALLOW_ANY_URL") == "1"
 NO_OPEN = os.environ.get("YTDL_NO_OPEN") == "1"
+# End-to-end tests: download this URL instead of the (YouTube) one the extension sent.
+URL_OVERRIDE = os.environ.get("YTDL_URL_OVERRIDE")
 
-# Chromium browsers whose NativeMessagingHosts folder we register in
+# macOS: Chromium browsers whose NativeMessagingHosts folder we register in
 # (relative to ~/Library/Application Support). Chrome is always registered;
 # the others only if that browser has been used on this Mac.
 CHROME_DIR = "Google/Chrome"
@@ -81,8 +120,17 @@ OTHER_BROWSER_DIRS = [
     "Microsoft Edge",
 ]
 
+# Windows: registry keys (under HKEY_CURRENT_USER) that point Chromium browsers at
+# our manifest. Chrome and Edge always; the others if installed.
+WIN_BROWSER_KEYS = {
+    "Chrome": r"Software\Google\Chrome",
+    "Edge": r"Software\Microsoft\Edge",
+    "Brave": r"Software\BraveSoftware\Brave-Browser",
+    "Chromium": r"Software\Chromium",
+}
+WIN_ALWAYS = {"Chrome", "Edge"}
+
 TOOL_ORDER = ["yt-dlp", "ffmpeg", "ffprobe", "deno"]
-TOOL_EXECUTABLES = {"yt-dlp": "yt-dlp_macos"}  # tools that live in a folder: bin/<name>/<executable>
 REQUIRED_TOOLS = {"yt-dlp", "ffmpeg", "ffprobe"}  # Deno is strongly recommended, not fatal
 VERSION_ARGS = {"yt-dlp": ["--version"], "ffmpeg": ["-version"], "ffprobe": ["-version"], "deno": ["--version"]}
 
@@ -145,10 +193,17 @@ def arch() -> str:
     return "arm64" if machine in ("arm64", "aarch64") else "x86_64"
 
 
+def tool_layout() -> dict:
+    """Where each tool's executable lives, relative to BIN_DIR."""
+    if IS_WIN:
+        # yt-dlp and FFmpeg are folders (an .exe plus the files it loads).
+        return {"yt-dlp": "yt-dlp/yt-dlp.exe", "ffmpeg": "ffmpeg/ffmpeg.exe",
+                "ffprobe": "ffmpeg/ffprobe.exe", "deno": "deno.exe"}
+    return {"yt-dlp": "yt-dlp/yt-dlp_macos", "ffmpeg": "ffmpeg", "ffprobe": "ffprobe", "deno": "deno"}
+
+
 def tool_path(name: str) -> Path:
-    if name in TOOL_EXECUTABLES:
-        return BIN_DIR / name / TOOL_EXECUTABLES[name]
-    return BIN_DIR / name
+    return BIN_DIR / tool_layout()[name]
 
 
 def tool_env() -> dict:
@@ -159,7 +214,9 @@ def tool_env() -> dict:
     non-ASCII) titles survive.
     """
     env = os.environ.copy()
-    env["PATH"] = os.pathsep.join([str(BIN_DIR), env.get("PATH") or "/usr/bin:/bin:/usr/sbin:/sbin"])
+    default_path = "" if IS_WIN else "/usr/bin:/bin:/usr/sbin:/sbin"
+    env["PATH"] = os.pathsep.join([str(BIN_DIR), str(tool_path("ffmpeg").parent),
+                                   env.get("PATH") or default_path])
     env["PYTHONIOENCODING"] = "utf-8"
     env.setdefault("LANG", "en_US.UTF-8")
     env.setdefault("LC_ALL", env["LANG"])
@@ -173,6 +230,12 @@ def open_in_finder(path: Path, reveal: bool = False) -> None:
     if IS_MAC:
         subprocess.run(["open", "-R", str(path)] if reveal else ["open", str(path)],
                        stdin=subprocess.DEVNULL, capture_output=True)
+    elif IS_WIN:
+        if reveal:
+            # explorer needs the quotes exactly like this, so pass one string.
+            subprocess.Popen(f'explorer /select,"{path}"')
+        else:
+            os.startfile(str(path))  # noqa: S606 - opens the folder in File Explorer
     else:
         subprocess.run(["xdg-open", str(path.parent if reveal else path)],
                        stdin=subprocess.DEVNULL, capture_output=True)
@@ -185,8 +248,28 @@ def osascript(lines: list[str], args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(cmd + args, stdin=subprocess.DEVNULL, capture_output=True, text=True)
 
 
+def message_box(text: str) -> None:
+    """Windows: a plain OK message box, kept on top so it isn't lost behind Chrome."""
+    if IS_WIN:
+        import ctypes
+        MB_ICONINFORMATION, MB_SETFOREGROUND, MB_TOPMOST = 0x40, 0x10000, 0x40000
+        ctypes.windll.user32.MessageBoxW(None, text, APP_NAME, MB_ICONINFORMATION | MB_SETFOREGROUND | MB_TOPMOST)
+    else:
+        dialog(text)
+
+
+def copy_to_clipboard(text: str) -> None:
+    if IS_MAC:
+        subprocess.run(["pbcopy"], input=text, text=True, capture_output=True)
+    elif IS_WIN:
+        env = {**os.environ, "YTDL_CLIP": text}  # via the environment: no quoting problems
+        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command",
+                        "Set-Clipboard -Value $env:YTDL_CLIP"],
+                       env=env, stdin=subprocess.DEVNULL, capture_output=True, **NO_WINDOW)
+
+
 def dialog(text: str, buttons: tuple[str, ...] = ("OK",), default: str | None = None) -> str:
-    """Show a native dialog; return the clicked button ("" if cancelled)."""
+    """macOS: show a native dialog; return the clicked button ("" if cancelled)."""
     if not IS_MAC:
         print(text)
         return default or buttons[-1]
@@ -246,6 +329,18 @@ def validate_url(url: str) -> str | None:
 # ----------------------------------------------------------------------------
 
 def tool_specs() -> dict:
+    if IS_WIN:
+        return {
+            # Unpacked build (yt-dlp.exe + _internal), like on the Mac.
+            "yt-dlp": {"url": "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_win.zip",
+                       "folder": "yt-dlp"},
+            # yt-dlp's own FFmpeg build; "shared" = ffmpeg.exe + ffprobe.exe + DLLs (91 MB vs 201 MB).
+            "ffmpeg": {"url": "https://github.com/yt-dlp/FFmpeg-Builds/releases/download/latest/"
+                              "ffmpeg-master-latest-win64-gpl-shared.zip", "folder": "ffmpeg"},
+            "ffprobe": {"provided_by": "ffmpeg"},
+            "deno": {"url": "https://github.com/denoland/deno/releases/latest/download/"
+                            "deno-x86_64-pc-windows-msvc.zip", "member": "deno.exe"},
+        }
     arm = arch() == "arm64"
     deno_arch = "aarch64" if arm else "x86_64"
     ff_arch = "arm64" if arm else "amd64"
@@ -257,7 +352,7 @@ def tool_specs() -> dict:
         # quarantines those fresh files and refuses to load them ("Python.framework
         # is damaged").
         "yt-dlp": {"url": "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos.zip",
-                   "unpack": True},
+                   "folder": "yt-dlp"},
         # Static builds, signed by their maintainer.
         "ffmpeg": {"url": f"{ff_base}/ffmpeg.zip", "member": "ffmpeg"},
         "ffprobe": {"url": f"{ff_base}/ffprobe.zip", "member": "ffprobe"},
@@ -342,8 +437,11 @@ def extract_zip(archive: Path, dest: Path) -> None:
 
 def install_tool(name: str, on_progress=None) -> None:
     spec = tool_specs()[name]
+    if "provided_by" in spec:  # e.g. ffprobe.exe comes in the FFmpeg folder on Windows
+        install_tool(spec["provided_by"], on_progress)
+        return
     BIN_DIR.mkdir(parents=True, exist_ok=True)
-    if spec.get("unpack"):
+    if "folder" in spec:
         _install_folder_tool(name, spec, on_progress)
     else:
         dest = tool_path(name)
@@ -371,8 +469,12 @@ def install_tool(name: str, on_progress=None) -> None:
 
 
 def _install_folder_tool(name: str, spec: dict, on_progress=None) -> None:
-    """Install a tool that ships as a folder (an executable plus its _internal/)."""
-    final = BIN_DIR / name
+    """Install a tool that ships as a folder (an executable plus the files it loads).
+
+    The folder is wherever the executable sits in the archive: the top for
+    yt-dlp, <name>/bin for the FFmpeg build.
+    """
+    final = BIN_DIR / spec["folder"]
     staging = BIN_DIR / f".{name}.new"
     archive = BIN_DIR / f".{name}.zip"
     shutil.rmtree(staging, ignore_errors=True)
@@ -381,12 +483,20 @@ def _install_folder_tool(name: str, spec: dict, on_progress=None) -> None:
         extract_zip(archive, staging)
     finally:
         archive.unlink(missing_ok=True)
-    exe = staging / TOOL_EXECUTABLES[name]
-    if not exe.is_file():
+    exe_name = Path(tool_layout()[name]).name
+    found = sorted(staging.rglob(exe_name), key=lambda p: len(p.parts))
+    if not found:
         shutil.rmtree(staging, ignore_errors=True)
-        raise RuntimeError(f"{TOOL_EXECUTABLES[name]} was not found in the download")
+        raise RuntimeError(f"{exe_name} was not found in the download")
+    exe = found[0]
     exe.chmod(exe.stat().st_mode | 0o755)
     clear_quarantine(staging)
+    if exe.parent != staging:  # keep just the folder that holds the executable
+        inner = BIN_DIR / f".{name}.inner"
+        shutil.rmtree(inner, ignore_errors=True)
+        exe.parent.rename(inner)
+        shutil.rmtree(staging, ignore_errors=True)
+        inner.rename(staging)
     # Swap in the new folder; a running download keeps using the old files.
     old = BIN_DIR / f".{name}.old"
     shutil.rmtree(old, ignore_errors=True)
@@ -427,7 +537,8 @@ def read_tool_version(name: str) -> str | None:
         return None
     try:
         result = subprocess.run([str(path), *VERSION_ARGS[name]], capture_output=True, text=True,
-                                timeout=120, stdin=subprocess.DEVNULL, env=tool_env())
+                                encoding="utf-8", errors="replace", timeout=120,
+                                stdin=subprocess.DEVNULL, env=tool_env(), **NO_WINDOW)
     except (OSError, subprocess.TimeoutExpired) as exc:
         log(f"{name} --version failed: {exc}")
         return None
@@ -482,10 +593,11 @@ def build_command(url: str, mode: str, work_dir: Path) -> list[str]:
         "--print", f"before_dl:{P_TITLE}%(id)s|%(title)s",
         "--print", f"after_move:{P_FILE}%(filepath)s",
         "-P", str(work_dir),
-        "-o", "%(title).180B [%(id)s].%(ext)s",
+        # Windows paths are limited to 260 characters, so keep names shorter there.
+        "-o", "%(title).120B [%(id)s].%(ext)s" if IS_WIN else "%(title).180B [%(id)s].%(ext)s",
     ]
     if tool_path("ffmpeg").exists():
-        cmd += ["--ffmpeg-location", str(BIN_DIR)]
+        cmd += ["--ffmpeg-location", str(tool_path("ffmpeg").parent)]
     if tool_path("deno").exists():
         cmd += ["--js-runtimes", f"deno:{tool_path('deno')}"]
     # -t mp3: extract audio as MP3.  -t mp4: H.264/AAC in MP4, which plays in
@@ -700,7 +812,7 @@ class Host:
                 self.emit_job(job)
                 return
 
-        work_dir = WORK_DIR / uuid.uuid4().hex  # never build paths from request data
+        work_dir = WORK_DIR / uuid.uuid4().hex[:10]  # never build paths from request data; short for Windows
         try:
             self._download(job, work_dir)
         finally:
@@ -710,7 +822,7 @@ class Host:
     def _download(self, job: dict, work_dir: Path) -> None:
         shutil.rmtree(work_dir, ignore_errors=True)
         work_dir.mkdir(parents=True)
-        cmd = build_command(job["url"], job["mode"], work_dir)
+        cmd = build_command(URL_OVERRIDE or job["url"], job["mode"], work_dir)
         log(f"job {job['id']}: {job['mode']} {job['url']}")
         job.update(status="running", phase="Starting…")
         self.emit_job(job)
@@ -719,7 +831,7 @@ class Host:
             process = subprocess.Popen(
                 cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace", bufsize=1,
-                cwd=str(work_dir), env=tool_env(), start_new_session=True)
+                cwd=str(work_dir), env=tool_env(), **child_process_options())
         with self.cv:
             self.current = (job, process)
             cancelled_early = job.get("_cancel")
@@ -825,6 +937,14 @@ class Host:
 
     @staticmethod
     def _kill(process: subprocess.Popen) -> None:
+        if IS_WIN:  # end yt-dlp and its ffmpeg children
+            subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                           stdin=subprocess.DEVNULL, capture_output=True, **NO_WINDOW)
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+            return
         try:
             os.killpg(process.pid, signal.SIGTERM)  # yt-dlp and its ffmpeg children
         except (ProcessLookupError, PermissionError):
@@ -877,6 +997,12 @@ class Host:
         The unpacked build can't update itself with -U, so download it again.
         """
         prepare_tools()
+        if IS_WIN and self.current:
+            # Windows can't replace files that a running download is using.
+            if not quiet:
+                self.send({"type": "update_done", "ok": False, "quiet": quiet, "version": None,
+                           "output": "Finish or cancel the current download, then click Update again."})
+            return
         with self.tools_lock:
             current = read_tool_version("yt-dlp")
             latest = latest_ytdlp_version()
@@ -902,16 +1028,23 @@ class Host:
     def maybe_auto_update(self) -> None:
         """Keep yt-dlp current: YouTube changes often break old versions."""
         last = load_config().get("last_update_check") or 0
-        if tool_path("yt-dlp").exists() and time.time() - last > 3 * 24 * 3600:
+        busy = self.current is not None or bool(self.queue)
+        if tool_path("yt-dlp").exists() and not busy and time.time() - last > 3 * 24 * 3600:
             update_config(last_update_check=time.time())
             self.spawn(lambda: self.do_update(quiet=True))
 
     def do_choose_folder(self) -> None:
-        if not IS_MAC:
-            self.send({"type": "error", "message": "Choosing a folder is only available on macOS."})
-            return
         current = download_dir()
         current.mkdir(parents=True, exist_ok=True)
+        if IS_WIN:
+            chosen = choose_folder_windows(current)
+            if chosen:
+                update_config(download_dir=chosen)
+            self.send(self.status_message("config"))
+            return
+        if not IS_MAC:
+            self.send({"type": "error", "message": "Choosing a folder isn't available here."})
+            return
         result = osascript([
             "on run argv",
             "activate",
@@ -936,6 +1069,30 @@ class Host:
             self._kill(running[1])
 
 
+def child_process_options() -> dict:
+    if IS_WIN:
+        return {"creationflags": subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
+def choose_folder_windows(current: Path) -> str | None:
+    """Folder picker that stays on top of Chrome. Paths go via the environment (no quoting issues)."""
+    script = (
+        "[Console]::OutputEncoding = [Text.Encoding]::UTF8;"
+        "Add-Type -AssemblyName System.Windows.Forms;"
+        "$owner = New-Object System.Windows.Forms.Form -Property @{TopMost=$true; ShowInTaskbar=$false};"
+        "$d = New-Object System.Windows.Forms.FolderBrowserDialog;"
+        "$d.Description = 'Save downloads to:';"
+        "$d.SelectedPath = $env:YTDL_CURRENT;"
+        "if ($d.ShowDialog($owner) -eq 'OK') { $d.SelectedPath }"
+    )
+    result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-STA", "-Command", script],
+                            env={**os.environ, "YTDL_CURRENT": str(current)}, stdin=subprocess.DEVNULL,
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", **NO_WINDOW)
+    chosen = result.stdout.strip()
+    return chosen if result.returncode == 0 and chosen else None
+
+
 # ----------------------------------------------------------------------------
 # Install / register / uninstall
 # ----------------------------------------------------------------------------
@@ -951,6 +1108,10 @@ def host_executable() -> Path:
         return Path(sys.executable).resolve()
     # Running from source: Chrome needs an executable, so write a wrapper.
     SUPPORT_DIR.mkdir(parents=True, exist_ok=True)
+    if IS_WIN:
+        wrapper = SUPPORT_DIR / "ytdl-helper-dev.bat"
+        wrapper.write_text(f'@"{sys.executable}" "{Path(__file__).resolve()}" %*\n')
+        return wrapper
     wrapper = SUPPORT_DIR / "ytdl-helper-dev.sh"
     wrapper.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{Path(__file__).resolve()}" "$@"\n')
     wrapper.chmod(0o755)
@@ -978,23 +1139,54 @@ def copy_extension() -> Path:
     return EXTENSION_DIR
 
 
-def register() -> list[Path]:
+def register() -> list:
+    """Tell Chrome (and other Chromium browsers) where the helper is; copy the extension."""
     copy_extension()
     manifest = {
         "name": HOST_NAME,
-        "description": f"{APP_NAME} helper (runs yt-dlp on this Mac)",
+        "description": f"{APP_NAME} helper (runs yt-dlp on this computer)",
         "path": str(host_executable()),
         "type": "stdio",
         "allowed_origins": [EXTENSION_ORIGIN],
     }
-    written = []
-    for folder in manifest_dirs():
-        folder.mkdir(parents=True, exist_ok=True)
-        (folder / f"{HOST_NAME}.json").write_text(json.dumps(manifest, indent=2) + "\n")
-        written.append(folder)
+    text = json.dumps(manifest, indent=2) + "\n"
+    written: list = []
+    if IS_WIN and not os.environ.get("YTDL_NM_DIRS"):
+        # Windows: the manifest file can live anywhere; a registry key points to it.
+        manifest_file = SUPPORT_DIR / "native-messaging-host.json"
+        manifest_file.write_text(text, encoding="utf-8")
+        for browser, key in windows_browser_keys():
+            set_registry_default(rf"{key}\NativeMessagingHosts\{HOST_NAME}", str(manifest_file))
+            written.append(browser)
+    else:
+        for folder in manifest_dirs():
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / f"{HOST_NAME}.json").write_text(text, encoding="utf-8")
+            written.append(folder)
     update_config(registered_path=manifest["path"], helper_version=VERSION)
-    log(f"registered {manifest['path']} in {len(written)} browser folder(s)")
+    log(f"registered {manifest['path']} for {len(written)} browser(s)")
     return written
+
+
+def windows_browser_keys() -> list[tuple[str, str]]:
+    import winreg
+    keys = []
+    for browser, key in WIN_BROWSER_KEYS.items():
+        if browser in WIN_ALWAYS:
+            keys.append((browser, key))
+            continue
+        try:
+            winreg.CloseKey(winreg.OpenKey(winreg.HKEY_CURRENT_USER, key))
+            keys.append((browser, key))
+        except OSError:
+            pass
+    return keys
+
+
+def set_registry_default(subkey: str, value: str) -> None:
+    import winreg
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, subkey) as handle:
+        winreg.SetValueEx(handle, "", 0, winreg.REG_SZ, value)
 
 
 def install_tools_cli(verbose: bool = True) -> dict:
@@ -1014,6 +1206,15 @@ def install_tools_cli(verbose: bool = True) -> dict:
 
 
 def uninstall() -> None:
+    if IS_WIN:
+        import winreg
+        for key in WIN_BROWSER_KEYS.values():
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, rf"{key}\NativeMessagingHosts\{HOST_NAME}")
+            except OSError:
+                pass
+        shutil.rmtree(SUPPORT_DIR, ignore_errors=True)
+        return
     base = HOME / "Library" / "Application Support"
     folders = set(manifest_dirs()) | {base / d / "NativeMessagingHosts" for d in [CHROME_DIR, *OTHER_BROWSER_DIRS]}
     for folder in folders:
@@ -1030,7 +1231,7 @@ def selftest() -> int:
     with_mp3 = subprocess.run(
         [str(tool_path("ffmpeg")), "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i",
          "sine=frequency=440:duration=1", "-c:a", "libmp3lame", "-f", "mp3", "-y", os.devnull],
-        capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        capture_output=True, text=True, stdin=subprocess.DEVNULL, **NO_WINDOW)
     print(f"mp3 encoder {'ok' if with_mp3.returncode == 0 else 'MISSING: ' + with_mp3.stderr.strip()}")
     ok = ok and with_mp3.returncode == 0
     print("selftest", "passed" if ok else "FAILED")
@@ -1077,7 +1278,7 @@ def gui_install() -> None:
     finally:
         if waiting and waiting.poll() is None:
             waiting.terminate()
-    subprocess.run(["pbcopy"], input=str(EXTENSION_DIR), text=True, capture_output=True)
+    copy_to_clipboard(str(EXTENSION_DIR))
 
     if failures:
         note = ("\n\nSome parts didn't download (" + ", ".join(failures) +
@@ -1094,6 +1295,51 @@ def gui_install() -> None:
     )
     if dialog(message, buttons=("Show Extension Folder", "Done"), default="Done") == "Show Extension Folder":
         open_in_finder(EXTENSION_DIR, reveal=True)
+
+
+WINDOWS_NEXT_STEPS = (
+    "YT Downloader is installed.{note}\n\n"
+    "Last step (one time): add the extension to Chrome.\n"
+    "1. In Chrome, go to chrome://extensions\n"
+    "2. Turn on “Developer mode” (top right).\n"
+    "3. Click “Load unpacked”. Click the address bar at the top of the window that opens, "
+    "press Ctrl+V, press Enter, then click “Select Folder”.\n\n"
+    "The extension folder's location is already on your clipboard, and the folder opens "
+    "when you click OK.\n\n"
+    "Microsoft Edge works the same way: edge://extensions, “Developer mode” is on the left."
+)
+
+
+def show_next_steps(failures: dict | None = None) -> None:
+    """Windows: how to add the extension (the installer runs this at the end)."""
+    copy_extension()
+    copy_to_clipboard(str(EXTENSION_DIR))
+    note = ""
+    missing = failures if failures is not None else {name: "" for name in missing_tools()}
+    if missing:
+        note = ("\n\nSome parts didn't download (" + ", ".join(missing) +
+                "). They'll be retried automatically on your first download.")
+    message_box(WINDOWS_NEXT_STEPS.format(note=note))
+    open_in_finder(EXTENSION_DIR, reveal=True)
+
+
+def windows_setup() -> None:
+    """Windows: double-clicking YT Downloader.exe repairs the install."""
+    print(f"{APP_NAME} {VERSION}: setting up…", flush=True)
+    register()
+    print("Registered with Chrome and Edge.", flush=True)
+    failures = install_tools_cli(verbose=True)
+    show_next_steps(failures)
+
+
+def print_paths() -> None:
+    print(f"support folder:  {SUPPORT_DIR}")
+    print(f"tools:           {BIN_DIR}")
+    print(f"extension:       {EXTENSION_DIR}")
+    print(f"downloads:       {download_dir()}")
+    print(f"helper:          {host_executable() if FROZEN else Path(__file__).resolve()}")
+    for name in TOOL_ORDER:
+        print(f"{name + ':':16} {tool_path(name)}")
 
 
 # ----------------------------------------------------------------------------
@@ -1128,9 +1374,18 @@ def main(argv: list[str]) -> int:
         uninstall()
         print("Removed the Chrome registration and", SUPPORT_DIR)
         return 0
+    if "--show-next-steps" in args:
+        show_next_steps()
+        return 0
+    if "--paths" in args:
+        print_paths()
+        return 0
     if not args or all(a.startswith("-psn_") for a in args):
         if IS_MAC:
             gui_install()
+            return 0
+        if IS_WIN:
+            windows_setup()
             return 0
     print(__doc__)
     return 0 if not args else 2

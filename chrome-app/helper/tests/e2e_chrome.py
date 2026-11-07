@@ -1,6 +1,6 @@
 """End-to-end check in a real Chrome: extension + native messaging + helper.
 
-    python3 mac/helper/tests/e2e_chrome.py [path-to-chrome]
+    python3 chrome-app/helper/tests/e2e_chrome.py [path-to-chrome]
 
 Runs on Linux with Chrome for Testing (branded Chrome ignores --load-extension).
 YouTube isn't contacted: the test's yt-dlp wrapper swaps the YouTube URL for a

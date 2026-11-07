@@ -141,7 +141,7 @@ function onHelperMessage(msg) {
     case "update_done":
       setHelper({
         state: "ready",
-        tools: { ...(helper.tools || {}), "yt-dlp": msg.version },
+        tools: msg.version ? { ...(helper.tools || {}), "yt-dlp": msg.version } : helper.tools,
         updateResult: msg.quiet ? helper.updateResult : { ok: msg.ok, text: msg.output, at: Date.now() },
       });
       break;
@@ -163,7 +163,7 @@ function onJob(update) {
   updateBadge();
   if (before?.status !== job.status) {
     if (job.status === "done") {
-      notify(`done:${job.id}`, "Download complete", job.title, [{ title: "Show in Finder" }]);
+      notify(`done:${job.id}`, "Download complete", job.title, [{ title: SHOW_IN_FOLDER }]);
     } else if (job.status === "error" && before) {
       notify(`error:${job.id}`, "Download failed", `${job.title}\n${job.error || ""}`);
     }
