@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "YT Downloader",
+  "version": "1.0.0",
+  "description": "Download YouTube videos (MP4) and audio (MP3) to your Mac. Uses the YT Downloader helper app.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnq9ljVK2E5LTBxJ1loVdJmXN42/mReswAbHVbLKk1EBIwsZfp4ymxIFRdi33En+FOzpju1AyFRKTs8HMXn9xFGcpnAFlcLkWrdbxNxmsJVd5ny/qpzanmNcKFtvv2jNWCl9QZWrKX6Le9vkpj4aQ74w7fBEPfLOoiK//yZKsBD9sutrJpdMW7PhRt7ixOW4AehY6Qri/5HoxozeMMWam1fYKwR+fKW5hxaouAXL6HBP1345PTDMSQPRbSDxBOqFcIpvqsn3pkdyXd8AHMt2wv1nC4Q0bSqw3nPJslRtrVjYB4dwbCqze+lR9n799FWopIsYSdTFEOLOUgKdU20DPmwIDAQAB",
+  "minimum_chrome_version": "116",
+  "permissions": ["nativeMessaging", "contextMenus", "notifications", "storage", "activeTab"],
+  "background": { "service_worker": "background.js" },
+  "action": {
+    "default_title": "YT Downloader",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png" }
+  },
+  "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+}

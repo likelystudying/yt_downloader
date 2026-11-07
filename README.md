@@ -12,9 +12,11 @@ A user-friendly graphical interface for downloading videos and audio from YouTub
   - Audio: Extracts and converts to MP3
 - **Visual Feedback**: Real-time download progress and logging
 - **Organized Storage**: Automatically creates and manages download folders
-- **Two Versions Available**:
+- **Three Versions Available**:
   - **PowerShell** (Windows-only): Native Windows GUI
   - **Python** (Cross-platform): Works on Windows, macOS, and Linux
+  - **Mac + Chrome extension**: download from Chrome's toolbar or right-click menu, no Terminal needed.
+    See [mac/README.md](mac/README.md).
 
 ## 🚀 Getting Started
 
