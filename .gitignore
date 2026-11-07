@@ -78,3 +78,6 @@ $RECYCLE.BIN/
 temp/
 tmp/
 *.temp
+
+# ===== Chrome helper app build output (CI publishes these) =====
+out/
