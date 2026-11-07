@@ -26,6 +26,7 @@ import re
 import shutil
 import signal
 import ssl
+import stat
 import struct
 import subprocess
 import sys
@@ -39,7 +40,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 APP_NAME = "YT Downloader"
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 HOST_NAME = "com.likelystudying.ytdownloader"
 EXTENSION_ID = "dchdeelhpdnkdichogpodkgkhojfehph"
 EXTENSION_ORIGIN = f"chrome-extension://{EXTENSION_ID}/"
@@ -81,6 +82,7 @@ OTHER_BROWSER_DIRS = [
 ]
 
 TOOL_ORDER = ["yt-dlp", "ffmpeg", "ffprobe", "deno"]
+TOOL_EXECUTABLES = {"yt-dlp": "yt-dlp_macos"}  # tools that live in a folder: bin/<name>/<executable>
 REQUIRED_TOOLS = {"yt-dlp", "ffmpeg", "ffprobe"}  # Deno is strongly recommended, not fatal
 VERSION_ARGS = {"yt-dlp": ["--version"], "ffmpeg": ["-version"], "ffprobe": ["-version"], "deno": ["--version"]}
 
@@ -144,6 +146,8 @@ def arch() -> str:
 
 
 def tool_path(name: str) -> Path:
+    if name in TOOL_EXECUTABLES:
+        return BIN_DIR / name / TOOL_EXECUTABLES[name]
     return BIN_DIR / name
 
 
@@ -247,8 +251,13 @@ def tool_specs() -> dict:
     ff_arch = "arm64" if arm else "amd64"
     ff_base = f"https://ffmpeg.martin-riedl.de/redirect/latest/macos/{ff_arch}/release"
     return {
-        # Universal macOS build; updates itself with -U.
-        "yt-dlp": {"url": "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos"},
+        # The *unpacked* universal macOS build (a folder: yt-dlp_macos + _internal/).
+        # Not the single-file yt-dlp_macos: that one unpacks its own Python into a
+        # temp folder on every run, and when Chrome is the parent process macOS
+        # quarantines those fresh files and refuses to load them ("Python.framework
+        # is damaged").
+        "yt-dlp": {"url": "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_macos.zip",
+                   "unpack": True},
         # Static builds, signed by their maintainer.
         "ffmpeg": {"url": f"{ff_base}/ffmpeg.zip", "member": "ffmpeg"},
         "ffprobe": {"url": f"{ff_base}/ffprobe.zip", "member": "ffprobe"},
@@ -271,11 +280,15 @@ def _ssl_context() -> ssl.SSLContext:
         return ssl.create_default_context()
 
 
-def fetch(url: str, dest: Path, on_progress=None) -> None:
+def _open_url(url: str, timeout: int = 60):
     request = urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}/{VERSION}"})
+    return urllib.request.urlopen(request, context=_ssl_context(), timeout=timeout)
+
+
+def fetch(url: str, dest: Path, on_progress=None) -> None:
     tmp = dest.with_name(dest.name + ".download")
     received, last = 0, 0.0
-    with urllib.request.urlopen(request, context=_ssl_context(), timeout=60) as response, tmp.open("wb") as out:
+    with _open_url(url) as response, tmp.open("wb") as out:
         total = int(response.headers.get("Content-Length") or 0)
         while True:
             chunk = response.read(256 * 1024)
@@ -291,32 +304,121 @@ def fetch(url: str, dest: Path, on_progress=None) -> None:
     tmp.replace(dest)
 
 
+def clear_quarantine(path: Path) -> None:
+    """Remove macOS's "downloaded from the internet" flag from our own tools.
+
+    The helper runs as a child of Chrome, and macOS tags every file a Chrome
+    child writes as "downloaded by Chrome". Quarantined helper binaries that
+    aren't notarized are then refused ("is damaged and can't be opened").
+    """
+    if IS_MAC and path.exists():
+        subprocess.run(["xattr", "-dr", "com.apple.quarantine", str(path)],
+                       stdin=subprocess.DEVNULL, capture_output=True)
+
+
+def extract_zip(archive: Path, dest: Path) -> None:
+    """Unpack keeping permissions (and symlinks): ditto on macOS, zipfile elsewhere."""
+    dest.mkdir(parents=True, exist_ok=True)
+    if IS_MAC and shutil.which("ditto"):
+        subprocess.run(["ditto", "-x", "-k", str(archive), str(dest)], check=True,
+                       stdin=subprocess.DEVNULL, capture_output=True)
+        return
+    with zipfile.ZipFile(archive) as zf:
+        for info in zf.infolist():
+            target = dest / info.filename
+            mode = info.external_attr >> 16
+            if info.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            elif stat.S_ISLNK(mode):
+                target.parent.mkdir(parents=True, exist_ok=True)
+                os.symlink(zf.read(info).decode(), target)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(info) as src, target.open("wb") as out:
+                    shutil.copyfileobj(src, out)
+                if mode & 0o777:
+                    target.chmod(mode & 0o777)
+
+
 def install_tool(name: str, on_progress=None) -> None:
     spec = tool_specs()[name]
     BIN_DIR.mkdir(parents=True, exist_ok=True)
-    dest = tool_path(name)
-    staged = dest.with_name(dest.name + ".new")
-    if "member" in spec:
-        archive = BIN_DIR / f"{name}.zip"
-        fetch(spec["url"], archive, on_progress)
-        try:
-            with zipfile.ZipFile(archive) as zf:
-                member = next((m for m in zf.namelist()
-                               if not m.endswith("/") and Path(m).name == spec["member"]), None)
-                if member is None:
-                    raise RuntimeError(f"{spec['member']} was not found in the download")
-                with zf.open(member) as src, staged.open("wb") as out:
-                    shutil.copyfileobj(src, out)
-        finally:
-            archive.unlink(missing_ok=True)
+    if spec.get("unpack"):
+        _install_folder_tool(name, spec, on_progress)
     else:
-        fetch(spec["url"], staged, on_progress)
-    staged.chmod(0o755)
-    if IS_MAC:  # Files we download ourselves aren't quarantined, but be sure.
-        subprocess.run(["xattr", "-d", "com.apple.quarantine", str(staged)], capture_output=True)
-    staged.replace(dest)
+        dest = tool_path(name)
+        staged = dest.with_name(dest.name + ".new")
+        if "member" in spec:
+            archive = BIN_DIR / f"{name}.zip"
+            fetch(spec["url"], archive, on_progress)
+            try:
+                with zipfile.ZipFile(archive) as zf:
+                    member = next((m for m in zf.namelist()
+                                   if not m.endswith("/") and Path(m).name == spec["member"]), None)
+                    if member is None:
+                        raise RuntimeError(f"{spec['member']} was not found in the download")
+                    with zf.open(member) as src, staged.open("wb") as out:
+                        shutil.copyfileobj(src, out)
+            finally:
+                archive.unlink(missing_ok=True)
+        else:
+            fetch(spec["url"], staged, on_progress)
+        staged.chmod(0o755)
+        clear_quarantine(staged)
+        staged.replace(dest)
     if name == "yt-dlp":  # a fresh download is current; next automatic update check in a few days
         update_config(last_update_check=time.time())
+
+
+def _install_folder_tool(name: str, spec: dict, on_progress=None) -> None:
+    """Install a tool that ships as a folder (an executable plus its _internal/)."""
+    final = BIN_DIR / name
+    staging = BIN_DIR / f".{name}.new"
+    archive = BIN_DIR / f".{name}.zip"
+    shutil.rmtree(staging, ignore_errors=True)
+    fetch(spec["url"], archive, on_progress)
+    try:
+        extract_zip(archive, staging)
+    finally:
+        archive.unlink(missing_ok=True)
+    exe = staging / TOOL_EXECUTABLES[name]
+    if not exe.is_file():
+        shutil.rmtree(staging, ignore_errors=True)
+        raise RuntimeError(f"{TOOL_EXECUTABLES[name]} was not found in the download")
+    exe.chmod(exe.stat().st_mode | 0o755)
+    clear_quarantine(staging)
+    # Swap in the new folder; a running download keeps using the old files.
+    old = BIN_DIR / f".{name}.old"
+    shutil.rmtree(old, ignore_errors=True)
+    if final.is_dir() and not final.is_symlink():
+        final.rename(old)
+    elif final.exists() or final.is_symlink():
+        final.unlink()  # a single-file build from version 1.0.0
+    staging.rename(final)
+    shutil.rmtree(old, ignore_errors=True)
+
+
+def remove_legacy_tools() -> None:
+    """Version 1.0.0 installed the single-file yt-dlp at bin/yt-dlp; it can't run under Chrome."""
+    legacy = BIN_DIR / "yt-dlp"
+    if legacy.is_file():
+        legacy.unlink()
+        log("removed single-file yt-dlp from 1.0.0")
+
+
+def latest_ytdlp_version() -> str | None:
+    try:
+        with _open_url("https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest", timeout=20) as response:
+            return json.loads(response.read().decode()).get("tag_name")
+    except Exception as exc:
+        log(f"couldn't check the latest yt-dlp version: {exc!r}")
+        return None
+
+
+def prepare_tools() -> None:
+    """Run before using the tools: drop the 1.0.0 single-file yt-dlp and clear quarantine."""
+    remove_legacy_tools()
+    clear_quarantine(BIN_DIR)
 
 
 def read_tool_version(name: str) -> str | None:
@@ -405,6 +507,8 @@ def friendly_error(message: str) -> str:
     lower = text.lower()
     if "confirm you" in lower and "bot" in lower:
         return "YouTube asked to confirm you're not a bot. Wait a while and try again."
+    if "failed to load python shared library" in lower or "library load disallowed" in lower:
+        return "macOS blocked yt-dlp from starting. Click “Update yt-dlp” to reinstall it, then try again."
     if "private video" in lower:
         return "This video is private."
     if "video unavailable" in lower:
@@ -477,6 +581,7 @@ class Host:
     def handle(self, message: dict) -> None:
         kind = message.get("type")
         if kind == "hello":
+            prepare_tools()
             self.send(self.status_message("hello"))
             self.maybe_auto_update()
         elif kind == "ping":
@@ -515,7 +620,7 @@ class Host:
         return {
             "type": kind,
             "version": VERSION,
-            "tools": {n: (versions.get(n) if installed[n] else None) for n in TOOL_ORDER},
+            "tools": {n: ((versions.get(n) or "not working") if installed[n] else None) for n in TOOL_ORDER},
             "missing": [n for n in TOOL_ORDER if not installed[n]],
             "downloadDir": str(download_dir()),
             "lastUpdateCheck": cfg.get("last_update_check"),
@@ -580,6 +685,7 @@ class Host:
                 self.emit_job(job)
 
     def run_job(self, job: dict) -> None:
+        prepare_tools()
         if missing_tools():
             job.update(status="preparing", phase="Installing components…")
             self.emit_job(job)
@@ -621,6 +727,7 @@ class Host:
             self._kill(process)
 
         last_error = ""
+        last_line = ""
         assert process.stdout is not None
         for raw in process.stdout:
             line = raw.rstrip("\n")
@@ -643,6 +750,7 @@ class Host:
                 last_error = line[len("ERROR:"):].strip()
                 log(f"job {job['id']}: {line}")
             elif line.strip():
+                last_line = line.strip()
                 log(f"job {job['id']}: {line[:500]}")
         code = process.wait()
         with self.cv:
@@ -652,7 +760,8 @@ class Host:
         if job.get("_cancel"):
             job.update(status="cancelled")
         elif code != 0:
-            job.update(status="error", error=friendly_error(last_error or f"yt-dlp stopped with code {code}."))
+            job.update(status="error", error=friendly_error(
+                last_error or last_line or f"yt-dlp stopped with code {code}."))
         else:
             try:
                 job["file"] = str(self.deliver(work_dir, job.get("file")))
@@ -763,22 +872,32 @@ class Host:
         self.ensure_tools()
 
     def do_update(self, quiet: bool = False) -> None:
-        if not tool_path("yt-dlp").exists():
-            self.ensure_tools()
+        """Install the latest yt-dlp release if it's newer (or the current one doesn't run).
+
+        The unpacked build can't update itself with -U, so download it again.
+        """
+        prepare_tools()
         with self.tools_lock:
-            try:
-                result = subprocess.run([str(tool_path("yt-dlp")), "-U"], capture_output=True, text=True,
-                                        timeout=600, stdin=subprocess.DEVNULL, env=tool_env())
-                output = (result.stdout + result.stderr).strip()
-                ok = result.returncode == 0
-            except (OSError, subprocess.TimeoutExpired) as exc:
-                output, ok = str(exc), False
-            log(f"yt-dlp -U: {output[-500:]}")
+            current = read_tool_version("yt-dlp")
+            latest = latest_ytdlp_version()
+            if current and latest and current == latest:
+                ok, output = True, f"yt-dlp is up to date ({current})."
+            elif current and not latest and quiet:
+                ok, output = True, ""  # couldn't check; try again next time
+            else:
+                try:
+                    install_tool("yt-dlp", lambda got, total: self.send(
+                        {"type": "setup_progress", "tool": "yt-dlp", "received": got, "total": total}))
+                    new = read_tool_version("yt-dlp")
+                    ok = new is not None
+                    output = f"Updated yt-dlp to {new}." if ok else "Updated, but yt-dlp doesn't run. See the log."
+                except Exception as exc:
+                    ok, output = False, f"Couldn't download yt-dlp: {exc}"
+            log(f"update: {output}")
             update_config(last_update_check=time.time())
             versions = refresh_versions(["yt-dlp"])
-        lines = [l for l in output.splitlines() if l.strip()]
         self.send({"type": "update_done", "ok": ok, "quiet": quiet,
-                   "output": lines[-1] if lines else "", "version": versions.get("yt-dlp")})
+                   "output": output, "version": versions.get("yt-dlp")})
 
     def maybe_auto_update(self) -> None:
         """Keep yt-dlp current: YouTube changes often break old versions."""
@@ -879,6 +998,7 @@ def register() -> list[Path]:
 
 
 def install_tools_cli(verbose: bool = True) -> dict:
+    prepare_tools()
     failures = {}
     for name in missing_tools():
         if verbose:
@@ -933,6 +1053,9 @@ def gui_install() -> None:
                             "and open it again.", buttons=("Quit", "Install Here Anyway"), default="Quit")
             if choice != "Install Here Anyway":
                 return
+    if FROZEN:
+        clear_quarantine(Path(sys.executable).resolve().parents[2])  # our .app, now that it's approved
+    prepare_tools()
     try:
         register()
     except Exception as exc:

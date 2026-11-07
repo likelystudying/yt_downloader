@@ -79,7 +79,15 @@ jobs:
           YTDL_NM_DIRS="$RUNNER_TEMP/nm" "$APP" --register
           cat "$RUNNER_TEMP/nm/com.likelystudying.ytdownloader.json"
           test -f "$YTDL_HOME/Chrome Extension/manifest.json"
+          test -x "$YTDL_HOME/bin/yt-dlp/yt-dlp_macos"   # the unpacked build, not the single file
+          # On a real Mac every file the helper writes while Chrome runs it is
+          # tagged "downloaded by Chrome". Tag all the tools that way: the helper
+          # must clear it, and downloads must still work.
+          find "$YTDL_HOME/bin" -type f -exec xattr -w com.apple.quarantine "0081;$(printf %x "$(date +%s)");Google Chrome;" {} +
           python3 mac/ci/protocol_check.py "$APP"
+          if xattr -lr "$YTDL_HOME/bin" | grep -q com.apple.quarantine; then
+            echo "quarantine flag was not cleared"; exit 1
+          fi
           codesign --verify --deep --verbose=1 "mac/helper/dist/YT Downloader.app"
 
       - name: Zip

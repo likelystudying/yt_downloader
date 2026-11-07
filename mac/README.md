@@ -65,6 +65,7 @@ once, then click the reload arrow on YT Downloader in `chrome://extensions`.
 | “Move YT Downloader to your Applications folder first” | You opened it from Downloads or the zip. Drag it to Applications, then open it from there. |
 | “YouTube asked to confirm you're not a bot” | Too many requests in a short time. Wait a while and try again. |
 | “Requested format is not available” or other new errors | Click **Update yt-dlp**, then download again. |
+| “Python.framework is damaged and can't be opened” when you download | Fixed in version 1.0.1. Click **Cancel**, install 1.0.1, open it once, then click **Update yt-dlp** in the popup. |
 | macOS asks whether Chrome or YT Downloader may access your Downloads folder | Click **Allow**. |
 | Anything else | The log is at `~/Library/Application Support/YT Downloader/helper.log` (Finder → Go → Go to Folder…). |
 

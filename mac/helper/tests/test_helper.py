@@ -66,8 +66,9 @@ def test_invalid_urls(url, monkeypatch):
 
 def test_command_keeps_downloads_out_of_playlists_and_uses_presets(tmp_path, monkeypatch):
     monkeypatch.setattr(h, "BIN_DIR", tmp_path)
-    for name in ("yt-dlp", "ffmpeg", "deno"):
-        (tmp_path / name).touch()
+    (tmp_path / "yt-dlp").mkdir()
+    for path in ("yt-dlp/yt-dlp_macos", "ffmpeg", "deno"):
+        (tmp_path / path).touch()
     video = h.build_command("https://youtu.be/dQw4w9WgXcQ", "video", tmp_path / "w")
     audio = h.build_command("https://youtu.be/dQw4w9WgXcQ", "audio", tmp_path / "w")
     assert "--no-playlist" in video and "--ignore-config" in video
@@ -86,6 +87,12 @@ def test_progress_counts_video_and_audio_streams():
     host._on_progress(job, "1000|1000|NA|2000|0")
     host._on_progress(job, "100|NA|1000|2000|5")  # second stream starts
     assert (job["part"], job["percent"], job["phase"]) == (2, 10.0, "Downloading audio")
+
+
+def test_friendly_errors_for_blocked_ytdlp():
+    message = h.friendly_error("[PYI-57784:ERROR] Failed to load Python shared library '/var/folders/x/Python': "
+                               "dlopen(...): code signature ... library load disallowed by system")
+    assert "Update yt-dlp" in message and "PYI" not in message
 
 
 def test_friendly_errors():
@@ -168,10 +175,12 @@ class Chrome:
         self.downloads = tmp_path / "Downloads"
         bin_dir = self.home / "bin"
         bin_dir.mkdir(parents=True)
-        (bin_dir / "yt-dlp").write_text(f'#!/bin/sh\nexec "{sys.executable}" -m yt_dlp "$@"\n')
+        (bin_dir / "yt-dlp").mkdir()
+        ytdlp = bin_dir / "yt-dlp" / "yt-dlp_macos"
+        ytdlp.write_text(f'#!/bin/sh\nexec "{sys.executable}" -m yt_dlp "$@"\n')
         (bin_dir / "deno").write_text('#!/bin/sh\necho "deno 2.5.6 (stable, release, aarch64-apple-darwin)"\n')
-        for name in ("yt-dlp", "deno"):
-            (bin_dir / name).chmod(0o755)
+        for path in (ytdlp, bin_dir / "deno"):
+            path.chmod(0o755)
         for name in ("ffmpeg", "ffprobe"):
             (bin_dir / name).symlink_to(shutil.which(name))
         env = {k: v for k, v in os.environ.items() if k not in ("LANG", "LC_ALL", "LC_CTYPE", "PYTHONIOENCODING")}
@@ -313,3 +322,85 @@ def test_chrome_closing_stops_helper_and_download(chrome, media_server):
     time.sleep(0.5)
     leftovers = subprocess.run(["pgrep", "-f", "slow/big.mp4"], capture_output=True, text=True).stdout.split()
     assert leftovers == []
+
+
+# --------------------------------------------------------------------------
+# Tool installation (yt-dlp ships as a folder; 1.0.0's single file is replaced)
+# --------------------------------------------------------------------------
+
+def _fake_ytdlp_zip(path: Path, version: str) -> Path:
+    import zipfile
+    with zipfile.ZipFile(path, "w") as zf:
+        info = zipfile.ZipInfo("yt-dlp_macos")
+        info.external_attr = (0o100755 << 16)
+        zf.writestr(info, f"#!/bin/sh\necho {version}\n")
+        zf.writestr("_internal/base_library.zip", b"stub")
+        lib = zipfile.ZipInfo("_internal/Python")
+        lib.external_attr = (0o100755 << 16)
+        zf.writestr(lib, b"stub")
+    return path
+
+
+@pytest.fixture
+def tool_server(tmp_path):
+    root = tmp_path / "srv"
+    root.mkdir()
+    handler = lambda *a, **k: SlowHandler(*a, directory=str(root), **k)  # noqa: E731
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield root, f"http://127.0.0.1:{server.server_address[1]}"
+    server.shutdown()
+
+
+@pytest.fixture
+def isolated(tmp_path, monkeypatch):
+    home = tmp_path / "support"
+    for name, value in {"SUPPORT_DIR": home, "BIN_DIR": home / "bin", "CONFIG_FILE": home / "config.json",
+                        "LOG_FILE": home / "helper.log"}.items():
+        monkeypatch.setattr(h, name, value)
+    return home
+
+
+def test_install_ytdlp_folder_replaces_single_file_build(isolated, tool_server, monkeypatch):
+    root, base = tool_server
+    _fake_ytdlp_zip(root / "yt-dlp_macos.zip", "2026.11.01")
+    monkeypatch.setattr(h, "tool_specs", lambda: {"yt-dlp": {"url": f"{base}/yt-dlp_macos.zip", "unpack": True}})
+    h.BIN_DIR.mkdir(parents=True)
+    (h.BIN_DIR / "yt-dlp").write_text("old single-file build")   # what 1.0.0 installed
+    h.prepare_tools()
+    assert not (h.BIN_DIR / "yt-dlp").exists()
+    h.install_tool("yt-dlp")
+    exe = h.tool_path("yt-dlp")
+    assert exe == h.BIN_DIR / "yt-dlp" / "yt-dlp_macos"
+    assert os.access(exe, os.X_OK) and os.access(h.BIN_DIR / "yt-dlp" / "_internal" / "Python", os.X_OK)
+    assert h.read_tool_version("yt-dlp") == "2026.11.01"
+    assert not list(h.BIN_DIR.glob(".yt-dlp*"))   # no staging leftovers
+    # Installing again swaps the folder in place.
+    _fake_ytdlp_zip(root / "yt-dlp_macos.zip", "2026.11.05")
+    h.install_tool("yt-dlp")
+    assert h.read_tool_version("yt-dlp") == "2026.11.05"
+
+
+def test_update_installs_only_when_newer(isolated, tool_server, monkeypatch):
+    root, base = tool_server
+    _fake_ytdlp_zip(root / "yt-dlp_macos.zip", "2026.11.01")
+    monkeypatch.setattr(h, "tool_specs", lambda: {"yt-dlp": {"url": f"{base}/yt-dlp_macos.zip", "unpack": True}})
+    h.install_tool("yt-dlp")
+    sent = []
+    host = h.Host.__new__(h.Host)
+    host.send = sent.append
+    host.tools_lock = threading.Lock()
+    monkeypatch.setattr(h, "latest_ytdlp_version", lambda: "2026.11.01")
+    host.do_update()
+    assert sent[-1]["ok"] and "up to date" in sent[-1]["output"]
+    _fake_ytdlp_zip(root / "yt-dlp_macos.zip", "2026.11.05")
+    monkeypatch.setattr(h, "latest_ytdlp_version", lambda: "2026.11.05")
+    host.do_update()
+    assert sent[-1]["ok"] and sent[-1]["version"] == "2026.11.05" and "Updated" in sent[-1]["output"]
+
+
+def test_tool_that_will_not_run_is_reported(chrome):
+    (chrome.home / "bin" / "deno").write_text("#!/bin/sh\nexit 1\n")
+    chrome.send({"type": "hello"})
+    hello = chrome.wait_for(lambda m: m["type"] == "hello")
+    assert hello["tools"]["deno"] == "not working" and hello["missing"] == []

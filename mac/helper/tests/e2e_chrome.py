@@ -46,7 +46,8 @@ def serve(root: Path) -> str:
 
 
 def fake_ytdlp(bin_dir: Path, local_url: str) -> None:
-    script = bin_dir / "yt-dlp"
+    (bin_dir / "yt-dlp").mkdir()
+    script = bin_dir / "yt-dlp" / "yt-dlp_macos"
     script.write_text(f"""#!{sys.executable}
 import sys, runpy
 args = sys.argv[1:]
